@@ -7,6 +7,7 @@
 <meta name="description" content="Free in-browser AI face, body and object tracking for reels. The camera follows your subject automatically.">
 <style>
   :root {
+    color-scheme: dark;
     --bg: #0b0d12;
     --panel: #151923;
     --panel-2: #1d2230;
@@ -174,7 +175,7 @@
           <button data-v="1080">1080p</button>
         </div>
         <button class="btn" id="exportBtn" disabled>Export video</button>
-        <a class="btn ghost hidden" id="download" download>Download</a>
+        <button class="btn ghost hidden" id="download">Download</button>
         <div class="small">Export plays the clip once in real time to record it, so keep this tab open and in front until it finishes.</div>
       </div>
     </aside>
@@ -184,7 +185,10 @@
 
 <script type="module">
 // Library and model locations. Add ?local to the URL to load from ./vendor instead (see README).
-const LOCAL = new URLSearchParams(location.search).has('local');
+// On claude.ai the page can't fetch from other sites, so the files are published next to it in ./vendor.
+// claude.ai only serves web file types, so there the models are published as base64 text (.b64.txt).
+const ON_CLAUDE = !!window.claude;
+const LOCAL = new URLSearchParams(location.search).has('local') || ON_CLAUDE;
 const MP_VERSION = '0.10.21';
 const LIB_URL = LOCAL ? './vendor/vision_bundle.mjs' : `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
 const WASM_URL = LOCAL ? './vendor/wasm' : `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`;
@@ -194,6 +198,17 @@ const MODELS = {
   body: MODEL_BASE + (LOCAL ? 'pose_landmarker_lite.task' : 'pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'),
   object: MODEL_BASE + (LOCAL ? 'efficientdet_lite0.tflite' : 'object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite'),
 };
+if (ON_CLAUDE) for (const k in MODELS) MODELS[k] += '.b64.txt';
+
+async function modelOptions(mode) {
+  if (!ON_CLAUDE) return { modelAssetPath: MODELS[mode] };
+  const res = await fetch(MODELS[mode]);
+  if (!res.ok) throw new Error('model fetch failed: ' + res.status);
+  const bin = atob((await res.text()).trim());
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return { modelAssetBuffer: bytes };
+}
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
@@ -346,7 +361,7 @@ async function getTask(mode, delegate = mode === 'object' ? 'CPU' : 'GPU') {
     fileset = await vision.FilesetResolver.forVisionTasks(WASM_URL);
   }
   const make = async (delegate) => {
-    const base = { baseOptions: { modelAssetPath: MODELS[mode], delegate }, runningMode: 'IMAGE' };
+    const base = { baseOptions: { ...(await modelOptions(mode)), delegate }, runningMode: 'IMAGE' };
     if (mode === 'face') return vision.FaceDetector.createFromOptions(fileset, { ...base, minDetectionConfidence: 0.5 });
     if (mode === 'body') return vision.PoseLandmarker.createFromOptions(fileset, { ...base, numPoses: 3, minPoseDetectionConfidence: 0.5 });
     return vision.ObjectDetector.createFromOptions(fileset, { ...base, maxResults: 8, scoreThreshold: 0.3 });
@@ -714,6 +729,25 @@ function ensureAudio() {
 }
 
 // ---------- Export ----------
+$('download').addEventListener('click', saveOutput);
+
+// On claude.ai a page can only save files through the downloads capability; elsewhere a plain link works.
+async function saveOutput() {
+  const out = state.output;
+  if (!out) return;
+  const downloads = window.claude ? await window.claude.use('downloads').catch(() => null) : null;
+  if (downloads) {
+    try { await downloads.save({ filename: out.filename, data: out.blob }); setStatus('Saved. Check your Downloads.'); }
+    catch (err) { if (err?.code !== 'declined') setStatus('Could not save the video here. Try again.', 'err'); }
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(out.blob);
+  a.download = out.filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+
 $('exportBtn').addEventListener('click', exportVideo);
 
 function pickMime() {
@@ -765,10 +799,8 @@ async function exportVideo() {
   const type = rec.mimeType || mime || 'video/webm';
   const ext = type.includes('mp4') ? 'mp4' : 'webm';
   const blob = new Blob(chunks, { type });
+  state.output = { blob, filename: `tracked-reel-${Date.now()}.${ext}` };
   const link = $('download');
-  if (link.href) URL.revokeObjectURL(link.href);
-  link.href = URL.createObjectURL(blob);
-  link.download = `tracked-reel-${Date.now()}.${ext}`;
   link.textContent = `Download ${ext.toUpperCase()} (${(blob.size / 1048576).toFixed(1)} MB)`;
   link.classList.remove('hidden');
   state.busy = false; state.exporting = false;
