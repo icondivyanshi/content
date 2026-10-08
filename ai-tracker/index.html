@@ -78,6 +78,10 @@
     width: 100%; margin-top: 8px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
     border-radius: 10px; padding: 9px; font: inherit;
   }
+  input[type=text] {
+    width: 100%; margin-top: 8px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px; font: inherit;
+  }
   .check { display: flex; gap: 8px; align-items: center; margin-top: 12px; font-size: 14px; }
   .check input { accent-color: var(--accent); width: 18px; height: 18px; }
   .btn {
@@ -151,6 +155,16 @@
           <button data-v="1:1">1:1</button>
           <button data-v="16:9">16:9</button>
         </div>
+        <h2 style="margin-top:14px">Layout</h2>
+        <div class="seg" id="layoutSeg">
+          <button data-v="full" class="on">Full screen</button>
+          <button data-v="window">Podcast frame</button>
+        </div>
+        <div id="titleBox" class="hidden">
+          <input type="text" id="title1" maxlength="40" placeholder="Title line 1, e.g. Your Brain Becomes" aria-label="Title line 1">
+          <input type="text" id="title2" maxlength="40" placeholder="Red line 2, e.g. What You Repeat" aria-label="Title line 2">
+          <div class="small">Podcast frame is always 9:16. The person sits in a framed window with the title above.</div>
+        </div>
         <label class="row">Zoom <output id="zoomOut">1.4×</output></label>
         <input type="range" id="zoom" min="1" max="3" step="0.05" value="1.4">
         <label class="row">Smoothness <output id="smoothOut">60%</output></label>
@@ -221,7 +235,7 @@ const view = $('view');
 const ctx = view.getContext('2d');
 
 const state = {
-  mode: 'face', aspect: '9:16', fx: 'none', sampleFps: 15, res: 720,
+  mode: 'face', aspect: '9:16', fx: 'none', sampleFps: 15, res: 720, layout: 'full', title1: '', title2: '',
   zoom: 1.4, smooth: 0.6, autoZoom: false, objClass: '',
   tap: null,          // {x, y} in video pixels, chosen subject
   track: null,        // analysed track, see analyze()
@@ -246,6 +260,12 @@ segment('modeSeg', 'mode', String, () => {
 });
 segment('aspectSeg', 'aspect', String, () => { sizeCanvas(); redraw(); });
 segment('fxSeg', 'fx', String, redraw);
+segment('layoutSeg', 'layout', String, () => {
+  $('titleBox').classList.toggle('hidden', state.layout !== 'window');
+  $('aspectSeg').querySelectorAll('button').forEach((b) => (b.disabled = state.layout === 'window'));
+  sizeCanvas(); redraw();
+});
+for (const id of ['title1', 'title2']) $(id).addEventListener('input', (e) => { state[id] = e.target.value; redraw(); });
 segment('qualSeg', 'sampleFps', Number, invalidateTrack);
 segment('resSeg', 'res', Number, () => { sizeCanvas(); redraw(); });
 $('objClass').addEventListener('change', (e) => { state.objClass = e.target.value; invalidateTrack(); });
@@ -335,9 +355,22 @@ view.addEventListener('click', (e) => {
 });
 
 // ---------- Canvas sizing ----------
+// Shape of the output video.
 function aspectRatio() {
+  if (state.layout === 'window') return 9 / 16;
   const [a, b] = state.aspect.split(':').map(Number);
   return a / b;
+}
+// Shape of the tracked camera window: the whole output, or the framed window in the podcast layout.
+function cropAspect() {
+  return state.layout === 'window' ? 8 / 9 : aspectRatio();
+}
+// Where the camera window sits on the output canvas.
+function windowRect() {
+  const W = view.width, H = view.height;
+  if (state.layout !== 'window') return { x: 0, y: 0, w: W, h: H };
+  const h = W * 9 / 8;
+  return { x: 0, y: Math.round(H * 0.2), w: W, h };
 }
 function sizeCanvas() {
   if (!state.track) {
@@ -568,7 +601,7 @@ function sampleAt(series, t) {
 
 // Crop rectangle (in video pixels) for time t.
 function cropAt(t) {
-  const W = video.videoWidth, H = video.videoHeight, a = aspectRatio();
+  const W = video.videoWidth, H = video.videoHeight, a = cropAspect();
   let cw = W, chh = W / a;
   if (chh > H) { chh = H; cw = H * a; }
   const cam = state.track.cam;
@@ -621,16 +654,48 @@ function redraw() {
 
 function renderFrame(t) {
   const c = cropAt(t);
-  const W = view.width, H = view.height;
-  ctx.drawImage(video, c.x, c.y, c.w, c.h, 0, 0, W, H);
-  if (state.fx === 'none') return;
-  const alpha = sampleAt(state.track.vis, t);
-  if (alpha < 0.02) return;
-  const tb = state.track.box, s = W / c.w;
-  const bw = sampleAt(tb.w, t) * s, bh = sampleAt(tb.h, t) * s;
-  const bx = (sampleAt(tb.cx, t) - c.x) * s - bw / 2, by = (sampleAt(tb.cy, t) - c.y) * s - bh / 2;
-  ctx.save(); ctx.globalAlpha = alpha;
-  drawEffect(state.fx, bx, by, bw, bh, t);
+  const r = windowRect();
+  if (state.layout === 'window') { ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, view.width, view.height); }
+  ctx.drawImage(video, c.x, c.y, c.w, c.h, r.x, r.y, r.w, r.h);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
+  const alpha = state.fx === 'none' ? 0 : sampleAt(state.track.vis, t);
+  if (alpha >= 0.02) {
+    const tb = state.track.box, s = r.w / c.w;
+    const bw = sampleAt(tb.w, t) * s, bh = sampleAt(tb.h, t) * s;
+    const bx = r.x + (sampleAt(tb.cx, t) - c.x) * s - bw / 2, by = r.y + (sampleAt(tb.cy, t) - c.y) * s - bh / 2;
+    ctx.globalAlpha = alpha;
+    drawEffect(state.fx, bx, by, bw, bh, t);
+  }
+  ctx.restore();
+  if (state.layout === 'window') drawFrameLayout(r);
+}
+
+// Podcast frame: the window's top and bottom edges fade into black, with a two-line title above.
+function drawFrameLayout(r) {
+  const W = view.width, f = r.h * 0.14;
+  let g = ctx.createLinearGradient(0, r.y, 0, r.y + f);
+  g.addColorStop(0, 'rgba(5,5,5,1)'); g.addColorStop(1, 'rgba(5,5,5,0)');
+  ctx.fillStyle = g; ctx.fillRect(r.x, r.y - 1, r.w, f + 1);
+  g = ctx.createLinearGradient(0, r.y + r.h, 0, r.y + r.h - f * 1.6);
+  g.addColorStop(0, 'rgba(5,5,5,1)'); g.addColorStop(1, 'rgba(5,5,5,0)');
+  ctx.fillStyle = g; ctx.fillRect(r.x, r.y + r.h - f * 1.6, r.w, f * 1.6 + 1);
+
+  const lines = [[state.title1, '#ffffff'], [state.title2, '#ff2a2a']].filter(([txt]) => txt.trim());
+  if (!lines.length) return;
+  let size = W * 0.056;
+  ctx.font = `800 ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  const widest = Math.max(...lines.map(([txt]) => ctx.measureText(txt).width));
+  if (widest > W * 0.9) size *= W * 0.9 / widest;
+  ctx.save();
+  ctx.font = `800 ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = size * 0.2;
+  const lh = size * 1.12, bottom = r.y - size * 0.45;
+  lines.forEach(([txt, color], i) => {
+    ctx.fillStyle = color;
+    ctx.fillText(txt, W / 2, bottom - (lines.length - 1 - i) * lh);
+  });
   ctx.restore();
 }
 
