@@ -180,10 +180,17 @@
           <div class="small">Podcast frame is always 9:16. The person sits in a framed window with the title above.</div>
         </div>
         <div class="small" id="aspectNote">Original keeps your video's shape.</div>
-        <label class="row">Zoom <output id="zoomOut">1.15×</output></label>
-        <input type="range" id="zoom" min="1" max="3" step="0.05" value="1.15">
-        <label class="row">Smoothness <output id="smoothOut">35%</output></label>
-        <input type="range" id="smooth" min="0" max="100" step="1" value="35">
+        <h2 style="margin-top:14px">Camera movement</h2>
+        <div class="seg" id="moveSeg">
+          <button data-v="1.15,45">Subtle</button>
+          <button data-v="1.3,30" class="on">Medium</button>
+          <button data-v="1.5,20">Strong</button>
+        </div>
+        <div class="small">The camera can only move inside your video, so more movement means a little more zoom. CapCut works the same way.</div>
+        <label class="row">Zoom <output id="zoomOut">1.3×</output></label>
+        <input type="range" id="zoom" min="1" max="3" step="0.05" value="1.3">
+        <label class="row">Smoothness <output id="smoothOut">30%</output></label>
+        <input type="range" id="smooth" min="0" max="100" step="1" value="30">
         <label class="check"><input type="checkbox" id="autoZoom"> Auto zoom (keep subject the same size)</label>
         <h2 style="margin-top:14px">Effect overlay</h2>
         <div class="seg" id="fxSeg">
@@ -198,8 +205,8 @@
         <h2>3 · Track and export</h2>
         <div class="seg" id="qualSeg">
           <button data-v="3">Fast</button>
-          <button data-v="2" class="on">Balanced</button>
-          <button data-v="1">Precise</button>
+          <button data-v="2">Balanced</button>
+          <button data-v="1" class="on">Precise</button>
         </div>
         <button class="btn" id="analyzeBtn" disabled>Start AI tracking</button>
         <div class="progress"><div id="bar"></div></div>
@@ -250,8 +257,8 @@ const view = $('view');
 const ctx = view.getContext('2d');
 
 const state = {
-  mode: 'face', aspect: 'orig', fx: 'none', sampleFps: 30, speed: 2, res: 720, layout: 'full', title1: '', title2: '',
-  zoom: 1.15, smooth: 0.35, autoZoom: false, objClass: '',
+  mode: 'face', aspect: 'orig', fx: 'none', sampleFps: 30, speed: 1, res: 720, layout: 'full', title1: '', title2: '',
+  zoom: 1.3, smooth: 0.3, autoZoom: false, objClass: '',
   cam: 'lock', lockSize: false, lockTilt: false,
   tap: null,          // {x, y} in video pixels, chosen subject
   track: null,        // analysed track, see analyze()
@@ -290,6 +297,15 @@ $('objClass').addEventListener('change', (e) => { state.objClass = e.target.valu
 
 $('zoom').addEventListener('input', (e) => { state.zoom = +e.target.value; $('zoomOut').value = state.zoom.toFixed(2).replace(/0$/, '') + '×'; rebuildPath(); });
 $('smooth').addEventListener('input', (e) => { state.smooth = +e.target.value / 100; $('smoothOut').value = e.target.value + '%'; rebuildPath(); });
+// Movement presets just set the zoom and smoothness sliders.
+$('moveSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b || state.busy) return;
+  $('moveSeg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+  const [z, sm] = b.dataset.v.split(',');
+  $('zoom').value = z; $('zoom').dispatchEvent(new Event('input'));
+  $('smooth').value = sm; $('smooth').dispatchEvent(new Event('input'));
+});
 $('autoZoom').addEventListener('change', (e) => { state.autoZoom = e.target.checked; rebuildPath(); });
 
 function setStatus(msg, kind = '') { const s = $('status'); s.textContent = msg; s.className = 'status ' + kind; }
@@ -455,9 +471,9 @@ async function getTask(mode, delegate = modelKind(mode) === 'object' ? 'CPU' : '
 }
 
 // Returns a list of {x, y, w, h, score, label} boxes in video pixels.
-function detect(task, mode) {
+function detect(task, mode, source = video) {
   const W = video.videoWidth, H = video.videoHeight;
-  const r = task.detect(video);
+  const r = task.detect(source);
   return (r.detections || []).map((d) => {
     const b = d.boundingBox, c = d.categories?.[0];
     // Face keypoints 0 and 1 are the eyes; the line between them gives the head tilt.
@@ -549,7 +565,10 @@ async function scan(task, mode) {
   let prev = null, lastSeen = -1e9, found = 0, shot = 0, lastThumb = null;
   await seek(0);
   video.muted = true;
-  video.playbackRate = state.speed;
+  // Playback speed adapts: it slows down when the AI can't keep up (so fewer frames are skipped)
+  // and speeds back up to the chosen speed when it can.
+  let rate = state.speed, lastT = -1, smooth = 0;
+  video.playbackRate = rate;
   const started = performance.now();
   let lastFrameAt = performance.now();
   await new Promise((resolve) => {
@@ -558,16 +577,28 @@ async function scan(task, mode) {
     const onFrame = (_now, meta) => {
       if (done) return;
       lastFrameAt = performance.now();
-      const t = meta.mediaTime;
-      const thumb = thumbnail();
+      // Grab this exact frame first. The video keeps playing while the AI works, so reading the
+      // element directly could give a later frame than the time we record, and the camera would lag.
+      let vf = null;
+      try { vf = new VideoFrame(video); } catch { vf = null; }
+      const t = vf && Number.isFinite(vf.timestamp) ? vf.timestamp / 1e6 : meta.mediaTime;
+      const src = vf || video;
+      const thumb = thumbnail(src);
       if (lastThumb && frameDiff(thumb, lastThumb) > 28) { shot++; prev = null; }
       lastThumb = thumb;
       let boxes = [];
-      try { boxes = detect(task, mode); } catch (err) { console.warn('detect failed', err); }
+      try { boxes = detect(task, mode, src); } catch (err) { console.warn('detect failed', err); }
+      vf?.close();
       const target = pickTarget(boxes, prev);
       if (target) { prev = target; lastSeen = t; found++; }
       else if (t - lastSeen > 1.5) prev = null;   // lost for 1.5s: reacquire freely
-      raw.push({ t, box: target, shot });
+      raw.push({ t, box: target, shot, thumb });
+      if (lastT >= 0) {
+        const gap = t - lastT;
+        if (gap > 2.5 / fps && rate > 0.25) { rate = Math.max(0.25, rate * 0.85); video.playbackRate = rate; smooth = 0; }
+        else if (gap <= 1.2 / fps && ++smooth > 30 && rate < state.speed) { rate = Math.min(state.speed, rate * 1.1); video.playbackRate = rate; smooth = 0; }
+      }
+      lastT = t;
       if (raw.length % 4 === 1) {
         drawSource(); drawDetections(boxes, target);
         const p = Math.min(1, t / dur);
@@ -595,9 +626,38 @@ async function scan(task, mode) {
     while (j + 1 < raw.length && Math.abs(raw[j + 1].t - t) <= Math.abs(raw[j].t - t)) j++;
     const r = raw[j];
     const near = r && Math.abs(r.t - t) <= 0.5 / fps + 1e-3;
-    samples.push({ t, box: near ? r.box : null, shot: r ? r.shot : 0 });
+    samples.push({ t, box: near ? r.box : null, shot: r ? r.shot : 0, thumb: near ? r.thumb : null, done: !!near });
   }
-  return { samples, found, rate: raw.length ? found / raw.length : 0 };
+
+  // Go back for every frame the AI didn't get to while playing, and check it exactly. On a fast phone
+  // there are few or none; on a slow one this keeps the tracking precise at the cost of some time.
+  const missing = samples.map((sm, i) => (sm.done ? -1 : i)).filter((i) => i >= 0);
+  for (let m = 0; m < missing.length; m++) {
+    const i = missing[m], sm = samples[i];
+    await seek(sm.t);
+    sm.thumb = thumbnail();
+    let a = i - 1; while (a >= 0 && !samples[a].done) a--;
+    let b = i + 1; while (b < n && !samples[b].done) b++;
+    const before = a >= 0 ? samples[a] : null, after = b < n ? samples[b] : null;
+    if (before && after && before.shot !== after.shot) {
+      sm.shot = frameDiff(sm.thumb, before.thumb) <= frameDiff(sm.thumb, after.thumb) ? before.shot : after.shot;
+    } else sm.shot = (before || after)?.shot ?? 0;
+    const prevBox = before && before.shot === sm.shot ? before.box : null;
+    let boxes = [];
+    try { boxes = detect(task, mode); } catch (err) { console.warn('detect failed', err); }
+    sm.box = pickTarget(boxes, prevBox);
+    sm.done = true;
+    if (sm.box) found++;
+    if (m % 4 === 0 || m === missing.length - 1) {
+      drawSource(); drawDetections(boxes, sm.box);
+      setProgress((m + 1) / missing.length);
+      setStatus(`Checking ${missing.length - m - 1} skipped frames…`);
+      await new Promise(requestAnimationFrame);
+    }
+  }
+  for (const sm of samples) { delete sm.thumb; delete sm.done; }
+  const seen = samples.filter((sm) => sm.box).length;
+  return { samples, found: seen, rate: seen / n };
 }
 
 // Fallback for browsers that can't report each played frame: seek to every frame instead.
@@ -637,8 +697,8 @@ async function scanBySeeking(task, mode) {
 const thumbCanvas = document.createElement('canvas');
 thumbCanvas.width = 32; thumbCanvas.height = 32;
 const thumbCtx = thumbCanvas.getContext('2d', { willReadFrequently: true });
-function thumbnail() {
-  thumbCtx.drawImage(video, 0, 0, 32, 32);
+function thumbnail(source = video) {
+  thumbCtx.drawImage(source, 0, 0, 32, 32);
   const d = thumbCtx.getImageData(0, 0, 32, 32).data, g = new Uint8Array(1024);
   for (let i = 0; i < 1024; i++) g[i] = (d[i * 4] * 3 + d[i * 4 + 1] * 6 + d[i * 4 + 2]) / 10;
   return g;
@@ -815,6 +875,10 @@ function redraw() {
   renderFrame(video.currentTime);
 }
 
+// While exporting during playback, the exact frame being encoded (the video element itself may
+// already show a later one).
+let frameSource = null;
+
 function renderFrame(t) {
   const r = windowRect();
   if (state.layout === 'window') { ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, view.width, view.height); }
@@ -823,7 +887,7 @@ function renderFrame(t) {
   if (state.cam === 'lock') ({ toView, scale } = drawLocked(t, r));
   else {
     const c = cropAt(t);
-    ctx.drawImage(video, c.x, c.y, c.w, c.h, r.x, r.y, r.w, r.h);
+    ctx.drawImage(frameSource || video, c.x, c.y, c.w, c.h, r.x, r.y, r.w, r.h);
     scale = r.w / c.w;
     toView = (x, y) => [r.x + (x - c.x) * scale, r.y + (y - c.y) * scale];
   }
@@ -879,12 +943,12 @@ function drawLocked(t, r) {
   ctx.save();
   ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
   const cover = Math.max(48 / W, 48 / H);
-  bgCtx.drawImage(video, (48 - W * cover) / 2, (48 - H * cover) / 2, W * cover, H * cover);
+  bgCtx.drawImage(frameSource || video, (48 - W * cover) / 2, (48 - H * cover) / 2, W * cover, H * cover);
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(bgCanvas, r.x, r.y, r.w, r.h);
   ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(r.x, r.y, r.w, r.h);
   ctx.translate(ax, ay); ctx.rotate(rot); ctx.scale(scale, scale); ctx.translate(-fx, -fy);
-  ctx.drawImage(video, 0, 0, W, H);
+  ctx.drawImage(frameSource || video, 0, 0, W, H);
   ctx.restore();
 
   const cos = Math.cos(rot), sin = Math.sin(rot);
@@ -1213,8 +1277,11 @@ async function encodeByPlayback(venc, n, fps, rate, started) {
       if (done || busy) return;
       busy = true;
       lastFrameAt = performance.now();
-      const m = meta.mediaTime;
+      let vf = null;
+      try { vf = new VideoFrame(video); } catch { vf = null; }
+      const m = vf && Number.isFinite(vf.timestamp) ? vf.timestamp / 1e6 : meta.mediaTime;
       if (k < n && k / fps < m - 0.5 / fps) {
+        vf?.close(); vf = null;
         // Skipped frames: go back for them one by one, then continue more slowly.
         video.pause();
         while (k < n && k / fps <= m + 0.5 / fps) { await seek(k / fps); emit(); }
@@ -1224,7 +1291,10 @@ async function encodeByPlayback(venc, n, fps, rate, started) {
         lastFrameAt = performance.now();
         if (k < n && !video.ended) video.play().catch(finish);
       } else {
+        frameSource = vf;
         while (k < n && k / fps <= m + 0.5 / fps) emit();
+        frameSource = null;
+        vf?.close();
         if (rate < 1 && performance.now() - cleanSince > 3000) {
           rate = Math.min(1, rate * 1.15);
           video.playbackRate = rate;

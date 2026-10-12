@@ -21,7 +21,8 @@ Everything runs in your browser with Google's MediaPipe AI models. Your video is
 7. Press **Export video**, wait while it builds the video frame by frame, then tap **Download**.
 
 Tips
-- **Fast / Balanced / Precise** sets how fast the clip plays while the AI watches it (3×, 2×, 1×). Use *Precise* for quick dance moves or sports.
+- **Fast / Balanced / Precise** sets the top speed the clip plays at while the AI watches it (3×, 2×, 1×). It slows down automatically if your phone can't keep up, and any frames it still misses are checked exactly afterwards.
+- **Camera movement: Subtle / Medium / Strong** sets how far the camera can move. It only moves inside your video, so more movement means a little more zoom.
 - Zoom must be above 1× for the camera to have room to move. Around 1.3–1.5× works well.
 - Face mode works best when the face is fairly close to the camera. For full-body or far-away shots, use **Body** (it uses the person detector, so it also works for small or partly hidden people).
 - Chrome and Safari on phones save **MP4**. Some desktop browsers save **WebM**.
