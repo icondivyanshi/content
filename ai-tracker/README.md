@@ -18,7 +18,7 @@ Everything runs in your browser with Google's MediaPipe AI models. Your video is
    - **Effect overlay**: *Lock-on* (target-lock frame), *Box* (labelled box) or *Spotlight* (darkens everything except the subject)
 5. Press **Start AI tracking** and wait for it to reach 100%.
 6. Press **Play** to preview. You can change zoom, smoothness, overlay and shape without tracking again.
-7. Press **Export video**, wait while it plays through once, then tap **Download**.
+7. Press **Export video**, wait while it builds the video frame by frame, then tap **Download**.
 
 Tips
 - **Fast / Balanced / Precise** controls how many frames per second the AI looks at. Use *Precise* for quick dance moves or sports.
@@ -42,6 +42,7 @@ vendor/wasm/*                       the package's wasm/ folder
 vendor/models/blaze_face_short_range.tflite
 vendor/models/pose_landmarker_lite.task
 vendor/models/efficientdet_lite0.tflite
+vendor/mp4-muxer.mjs                from npm mp4-muxer@5.1.5 (build/mp4-muxer.mjs)
 ```
 
 Serve the folder over http (for example `npx serve ai-tracker`), since browsers won't load the WASM from `file://`.

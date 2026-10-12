@@ -177,10 +177,10 @@
           <div class="small">Podcast frame is always 9:16. The person sits in a framed window with the title above.</div>
         </div>
         <div class="small" id="aspectNote">Original keeps your video's shape.</div>
-        <label class="row">Zoom <output id="zoomOut">1.2×</output></label>
-        <input type="range" id="zoom" min="1" max="3" step="0.05" value="1.2">
-        <label class="row">Smoothness <output id="smoothOut">15%</output></label>
-        <input type="range" id="smooth" min="0" max="100" step="1" value="15">
+        <label class="row">Zoom <output id="zoomOut">1.1×</output></label>
+        <input type="range" id="zoom" min="1" max="3" step="0.05" value="1.1">
+        <label class="row">Smoothness <output id="smoothOut">35%</output></label>
+        <input type="range" id="smooth" min="0" max="100" step="1" value="35">
         <label class="check"><input type="checkbox" id="autoZoom"> Auto zoom (keep subject the same size)</label>
         <h2 style="margin-top:14px">Effect overlay</h2>
         <div class="seg" id="fxSeg">
@@ -207,7 +207,7 @@
         </div>
         <button class="btn" id="exportBtn" disabled>Export video</button>
         <button class="btn ghost hidden" id="download">Download</button>
-        <div class="small">Export plays the clip once in real time to record it, so keep this tab open and in front until it finishes.</div>
+        <div class="small">Export builds the video frame by frame, so keep this tab open and in front until it finishes.</div>
       </div>
     </aside>
   </div>
@@ -221,6 +221,7 @@
 const ON_CLAUDE = !!window.claude;
 const LOCAL = new URLSearchParams(location.search).has('local') || ON_CLAUDE;
 const MP_VERSION = '0.10.21';
+const MUXER_URL = LOCAL ? './vendor/mp4-muxer.mjs' : 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.5/build/mp4-muxer.mjs';
 const LIB_URL = LOCAL ? './vendor/vision_bundle.mjs' : `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
 const WASM_URL = LOCAL ? './vendor/wasm' : `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`;
 const MODEL_BASE = LOCAL ? './vendor/models/' : 'https://storage.googleapis.com/mediapipe-models/';
@@ -247,7 +248,7 @@ const ctx = view.getContext('2d');
 
 const state = {
   mode: 'face', aspect: 'orig', fx: 'none', sampleFps: 30, res: 720, layout: 'full', title1: '', title2: '',
-  zoom: 1.2, smooth: 0.15, autoZoom: false, objClass: '',
+  zoom: 1.1, smooth: 0.35, autoZoom: false, objClass: '',
   cam: 'lock', lockSize: false, lockTilt: false,
   tap: null,          // {x, y} in video pixels, chosen subject
   track: null,        // analysed track, see analyze()
@@ -320,6 +321,7 @@ async function loadFile(file) {
   stopPlayback();
   if (state.url) URL.revokeObjectURL(state.url);
   state.url = URL.createObjectURL(file);
+  state.file = file;
   state.track = null; state.tap = null;
   $('exportBtn').disabled = true;
   $('download').classList.add('hidden');
@@ -355,7 +357,7 @@ async function seek(t) {
   const p = once(video, 'seeked', 10000);
   // Some phones fire 'seeked' before the new frame is decoded, so the AI would see the previous
   // frame and the camera would trail behind. Wait for the frame itself where the browser can tell us.
-  const frame = hasRVFC ? new Promise((res) => { video.requestVideoFrameCallback(() => res()); setTimeout(res, 400); }) : null;
+  const frame = hasRVFC ? new Promise((res) => { video.requestVideoFrameCallback(() => res()); setTimeout(res, 150); }) : null;
   video.currentTime = t;
   await p;
   if (frame) await frame;
@@ -977,7 +979,123 @@ function pickMime() {
 
 async function exportVideo() {
   if (state.busy || !state.track) return;
-  if (!window.MediaRecorder || !view.captureStream) { setStatus('This browser cannot record video. Try Chrome or Safari.', 'err'); return; }
+  stopPlayback();
+  state.busy = true; state.exporting = true;
+  $('analyzeBtn').disabled = true; $('exportBtn').disabled = true; $('download').classList.add('hidden');
+  let result = null;
+  try { result = await exportFrameByFrame(); }
+  catch (err) { console.warn('frame-by-frame export failed, recording live instead', err); }
+  state.busy = false; state.exporting = false;
+  if (!result) return exportRealtime();
+  finishExport(result.blob, 'mp4');
+}
+
+function finishExport(blob, ext) {
+  state.output = { blob, filename: `tracked-reel-${Date.now()}.${ext}` };
+  const link = $('download');
+  link.textContent = `Download ${ext.toUpperCase()} (${(blob.size / 1048576).toFixed(1)} MB)`;
+  link.classList.remove('hidden');
+  state.busy = false; state.exporting = false;
+  $('analyzeBtn').disabled = false; $('exportBtn').disabled = false;
+  setProgress(1);
+  setStatus(ext === 'webm'
+    ? 'Exported as WebM. If your app will not take it, export again from Chrome or Safari on your phone, which save MP4.'
+    : 'Exported. Save it and post it.');
+}
+
+// Renders every frame exactly, one at a time, and encodes an MP4 with the original sound.
+// Unlike live recording, a slow phone can't drop frames, so the output is as smooth as the input.
+// Returns null when this browser has no video encoder (then the caller records live instead).
+async function exportFrameByFrame() {
+  if (!window.VideoEncoder || !window.VideoFrame) return null;
+  const W = view.width, H = view.height, fps = 30;
+  const bitrate = Math.max(W, H) >= 1600 ? 12e6 : 8e6;
+  let vcfg = null, muxVideo = null;
+  for (const [codec, mux] of [['avc1.640028', 'avc'], ['avc1.4d0028', 'avc'], ['avc1.42e028', 'avc'], ['vp09.00.40.08', 'vp9']]) {
+    const cfg = { codec, width: W, height: H, bitrate, framerate: fps };
+    if ((await VideoEncoder.isConfigSupported(cfg).catch(() => ({}))).supported) { vcfg = cfg; muxVideo = mux; break; }
+  }
+  if (!vcfg) return null;
+
+  setStatus('Preparing export…');
+  const { Muxer, ArrayBufferTarget } = await import(MUXER_URL);
+
+  // Sound: decode the original file's audio and re-encode it (AAC where available).
+  let pcm = null, acfg = null, muxAudio = null;
+  if (window.AudioEncoder && state.file) {
+    try {
+      const actx = new (window.AudioContext || window.webkitAudioContext)();
+      pcm = await actx.decodeAudioData(await state.file.arrayBuffer());
+      actx.close?.();
+      const ch = Math.min(2, pcm.numberOfChannels);
+      for (const [codec, mux] of [['mp4a.40.2', 'aac'], ['opus', 'opus']]) {
+        const cfg = { codec, sampleRate: pcm.sampleRate, numberOfChannels: ch, bitrate: 128000 };
+        if ((await AudioEncoder.isConfigSupported(cfg).catch(() => ({}))).supported) { acfg = cfg; muxAudio = mux; break; }
+      }
+    } catch (err) { console.warn('no audio track or audio decode failed', err); pcm = null; }
+  }
+
+  const target = new ArrayBufferTarget();
+  const muxer = new Muxer({
+    target,
+    video: { codec: muxVideo, width: W, height: H, frameRate: fps },
+    ...(acfg ? { audio: { codec: muxAudio, sampleRate: acfg.sampleRate, numberOfChannels: acfg.numberOfChannels } } : {}),
+    fastStart: 'in-memory',
+    firstTimestampBehavior: 'offset',
+  });
+  let failure = null;
+  const venc = new VideoEncoder({ output: (c, m) => muxer.addVideoChunk(c, m), error: (e) => (failure = e) });
+  venc.configure(vcfg);
+
+  const n = Math.max(1, Math.floor(video.duration * fps));
+  const started = performance.now();
+  for (let i = 0; i < n; i++) {
+    if (failure) throw failure;
+    const t = i / fps;
+    await seek(t);
+    renderFrame(t);
+    const frame = new VideoFrame(view, { timestamp: Math.round(t * 1e6), duration: Math.round(1e6 / fps) });
+    venc.encode(frame, { keyFrame: i % (fps * 2) === 0 });
+    frame.close();
+    while (venc.encodeQueueSize > 6) await new Promise((r) => setTimeout(r, 2));
+    if (i % 3 === 0 || i === n - 1) {
+      const eta = (performance.now() - started) / (i + 1) * (n - i - 1) / 1000;
+      setProgress((i + 1) / n);
+      setStatus(`Exporting ${Math.round((i + 1) / n * 100)}% · about ${Math.ceil(eta)}s left`);
+    }
+  }
+  await venc.flush();
+  if (failure) throw failure;
+
+  if (acfg) {
+    const aenc = new AudioEncoder({ output: (c, m) => muxer.addAudioChunk(c, m), error: (e) => (failure = e) });
+    aenc.configure(acfg);
+    const ch = acfg.numberOfChannels, rate = pcm.sampleRate;
+    const total = Math.min(pcm.length, Math.round(video.duration * rate));
+    const channels = Array.from({ length: ch }, (_, c) => pcm.getChannelData(c));
+    for (let start = 0; start < total; start += 4800) {
+      const len = Math.min(4800, total - start);
+      const data = new Float32Array(len * ch);
+      for (let c = 0; c < ch; c++) data.set(channels[c].subarray(start, start + len), c * len);
+      const ad = new AudioData({ format: 'f32-planar', sampleRate: rate, numberOfFrames: len, numberOfChannels: ch, timestamp: Math.round(start / rate * 1e6), data });
+      aenc.encode(ad);
+      ad.close();
+    }
+    await aenc.flush();
+    if (failure) throw failure;
+  }
+  muxer.finalize();
+  await seek(0); redraw();
+  return { blob: new Blob([target.buffer], { type: 'video/mp4' }) };
+}
+
+// Fallback for browsers without WebCodecs: play the clip once and record the canvas live.
+async function exportRealtime() {
+  if (!window.MediaRecorder || !view.captureStream) {
+    setStatus('This browser cannot record video. Try Chrome or Safari.', 'err');
+    $('analyzeBtn').disabled = false; $('exportBtn').disabled = false;
+    return;
+  }
   stopPlayback();
   state.busy = true; state.exporting = true;
   $('analyzeBtn').disabled = true; $('exportBtn').disabled = true; $('download').classList.add('hidden');
@@ -1015,18 +1133,7 @@ async function exportVideo() {
   stopPlayback();
 
   const type = rec.mimeType || mime || 'video/webm';
-  const ext = type.includes('mp4') ? 'mp4' : 'webm';
-  const blob = new Blob(chunks, { type });
-  state.output = { blob, filename: `tracked-reel-${Date.now()}.${ext}` };
-  const link = $('download');
-  link.textContent = `Download ${ext.toUpperCase()} (${(blob.size / 1048576).toFixed(1)} MB)`;
-  link.classList.remove('hidden');
-  state.busy = false; state.exporting = false;
-  $('analyzeBtn').disabled = false; $('exportBtn').disabled = false;
-  setProgress(1);
-  setStatus(ext === 'webm'
-    ? 'Exported as WebM. If your app will not take it, export again from Chrome or Safari on your phone, which save MP4.'
-    : 'Exported. Save it and post it.');
+  finishExport(new Blob(chunks, { type }), type.includes('mp4') ? 'mp4' : 'webm');
 }
 </script>
 </body>
