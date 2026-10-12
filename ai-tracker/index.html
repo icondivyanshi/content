@@ -150,7 +150,8 @@
       <div class="panel">
         <h2>2 · Look</h2>
         <div class="seg" id="aspectSeg">
-          <button data-v="9:16" class="on">9:16</button>
+          <button data-v="orig" class="on">Original</button>
+          <button data-v="9:16">9:16</button>
           <button data-v="4:5">4:5</button>
           <button data-v="1:1">1:1</button>
           <button data-v="16:9">16:9</button>
@@ -165,6 +166,7 @@
           <input type="text" id="title2" maxlength="40" placeholder="Red line 2, e.g. What You Repeat" aria-label="Title line 2">
           <div class="small">Podcast frame is always 9:16. The person sits in a framed window with the title above.</div>
         </div>
+        <div class="small" id="aspectNote">Original keeps your video's shape. The camera zooms in a little and moves with you.</div>
         <label class="row">Zoom <output id="zoomOut">1.4×</output></label>
         <input type="range" id="zoom" min="1" max="3" step="0.05" value="1.4">
         <label class="row">Smoothness <output id="smoothOut">25%</output></label>
@@ -214,7 +216,6 @@ const WASM_URL = LOCAL ? './vendor/wasm' : `https://cdn.jsdelivr.net/npm/@mediap
 const MODEL_BASE = LOCAL ? './vendor/models/' : 'https://storage.googleapis.com/mediapipe-models/';
 const MODELS = {
   face: MODEL_BASE + (LOCAL ? 'blaze_face_short_range.tflite' : 'face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite'),
-  body: MODEL_BASE + (LOCAL ? 'pose_landmarker_lite.task' : 'pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'),
   object: MODEL_BASE + (LOCAL ? 'efficientdet_lite0.tflite' : 'object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite'),
 };
 if (ON_CLAUDE) for (const k in MODELS) MODELS[k] += '.b64.txt';
@@ -235,7 +236,7 @@ const view = $('view');
 const ctx = view.getContext('2d');
 
 const state = {
-  mode: 'face', aspect: '9:16', fx: 'none', sampleFps: 15, res: 720, layout: 'full', title1: '', title2: '',
+  mode: 'face', aspect: 'orig', fx: 'none', sampleFps: 15, res: 720, layout: 'full', title1: '', title2: '',
   zoom: 1.4, smooth: 0.25, autoZoom: false, objClass: '',
   tap: null,          // {x, y} in video pixels, chosen subject
   track: null,        // analysed track, see analyze()
@@ -358,6 +359,7 @@ view.addEventListener('click', (e) => {
 // Shape of the output video.
 function aspectRatio() {
   if (state.layout === 'window') return 9 / 16;
+  if (state.aspect === 'orig') return (video.videoWidth || 9) / (video.videoHeight || 16);
   const [a, b] = state.aspect.split(':').map(Number);
   return a / b;
 }
@@ -395,7 +397,11 @@ function fitRect() {
 let vision = null, fileset = null;
 const tasks = {};
 // GPU is faster, but the int8 object model returns nothing on the GPU delegate, so it always runs on CPU.
-async function getTask(mode, delegate = mode === 'object' ? 'CPU' : 'GPU') {
+// Body mode uses the object detector's "person" class: it finds people far away, from above or
+// partly hidden, where pose models lose them.
+const modelKind = (mode) => (mode === 'face' ? 'face' : 'object');
+async function getTask(mode, delegate = modelKind(mode) === 'object' ? 'CPU' : 'GPU') {
+  mode = modelKind(mode);
   const key = mode + delegate;
   if (tasks[key]) return tasks[key];
   setStatus('Loading AI model (first time takes a few seconds)…');
@@ -406,8 +412,7 @@ async function getTask(mode, delegate = mode === 'object' ? 'CPU' : 'GPU') {
   const make = async (delegate) => {
     const base = { baseOptions: { ...(await modelOptions(mode)), delegate }, runningMode: 'IMAGE' };
     if (mode === 'face') return vision.FaceDetector.createFromOptions(fileset, { ...base, minDetectionConfidence: 0.5 });
-    if (mode === 'body') return vision.PoseLandmarker.createFromOptions(fileset, { ...base, numPoses: 3, minPoseDetectionConfidence: 0.5 });
-    return vision.ObjectDetector.createFromOptions(fileset, { ...base, maxResults: 8, scoreThreshold: 0.3 });
+    return vision.ObjectDetector.createFromOptions(fileset, { ...base, maxResults: 10, scoreThreshold: 0.25 });
   };
   try { tasks[key] = { task: await make(delegate), delegate }; }
   catch (err) {
@@ -419,26 +424,11 @@ async function getTask(mode, delegate = mode === 'object' ? 'CPU' : 'GPU') {
 
 // Returns a list of {x, y, w, h, score, label} boxes in video pixels.
 function detect(task, mode) {
-  const W = video.videoWidth, H = video.videoHeight;
-  if (mode === 'body') {
-    const r = task.detect(video);
-    return (r.landmarks || []).map((lm) => {
-      const pts = lm.filter((p) => (p.visibility ?? 1) > 0.4 && p.x > -0.1 && p.x < 1.1 && p.y > -0.1 && p.y < 1.1);
-      if (pts.length < 4) return null;
-      let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
-      for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
-      x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(1, x1); y1 = Math.min(1, y1);
-      // Pose landmarks stop at the forehead, so pad the top a little for the head.
-      const pad = (y1 - y0) * 0.08;
-      y0 = Math.max(0, y0 - pad);
-      return { x: x0 * W, y: y0 * H, w: (x1 - x0) * W, h: (y1 - y0) * H, score: 0.9, label: 'person' };
-    }).filter(Boolean);
-  }
   const r = task.detect(video);
   return (r.detections || []).map((d) => {
     const b = d.boundingBox, c = d.categories?.[0];
     return { x: b.originX, y: b.originY, w: b.width, h: b.height, score: c?.score ?? 0.9, label: mode === 'face' ? 'face' : (c?.categoryName || 'object') };
-  }).filter((b) => mode !== 'object' || !state.objClass || b.label === state.objClass);
+  }).filter((b) => (mode === 'body' ? b.label === 'person' : mode !== 'object' || !state.objClass || b.label === state.objClass));
 }
 
 // Pick the detection that continues the current subject.
@@ -615,7 +605,7 @@ function rebuildPath() {
     cx: g(ch('cx'), sigma), cy: g(ch('cy'), sigma),
     size: g(ch('h').map((h, i) => Math.max(h, tr.raw[i].w)), sigma * 1.5),
     // 1 while the subject is on screen, easing to 0 (whole frame, no zoom) when it's gone for a while.
-    on: g(seen, fps * 0.35).map((v) => Math.min(1, v * 2.5)),
+    on: g(heldPresence(tr.samples, fps), fps * 0.3),
   };
   // A lighter smoothing for the overlay so it hugs the subject.
   const lite = Math.max(0.6, fps * 0.05);
@@ -624,6 +614,23 @@ function rebuildPath() {
   const vis = g(seen, Math.max(0.6, fps * 0.15)).map((v) => Math.min(1, v * 1.6));
   tr.cam = cam; tr.box = box; tr.vis = vis;
   if (!state.playing) redraw();
+}
+
+// 1 where the subject is on screen. Short misses (under 1.5s) count as present so the camera holds
+// steady through them; only long absences, or shots with no subject at all, count as gone.
+function heldPresence(samples, fps) {
+  const out = samples.map((s) => (s.box ? 1 : 0));
+  const maxGap = Math.round(fps * 1.5);
+  for (let i = 0; i < samples.length;) {
+    if (out[i]) { i++; continue; }
+    let j = i;
+    while (j < samples.length && !out[j] && samples[j].shot === samples[i].shot) j++;
+    const before = i > 0 && out[i - 1] && samples[i - 1].shot === samples[i].shot;
+    const after = j < samples.length && out[j] && samples[j].shot === samples[i].shot;
+    if ((before || after) && j - i <= maxGap) for (let k = i; k < j; k++) out[k] = 1;
+    i = j;
+  }
+  return out;
 }
 
 function sampleAt(series, t) {

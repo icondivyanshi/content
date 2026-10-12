@@ -11,7 +11,7 @@ Everything runs in your browser with Google's MediaPipe AI models. Your video is
 3. Pick what to follow: **Face**, **Body** or **Object** (for objects you can choose dog, car, ball and so on).
    If there are several people in the shot, tap the one you want on the video.
 4. Pick the look:
-   - **9:16 / 4:5 / 1:1 / 16:9**: output shape (9:16 for Reels and Shorts)
+   - **Original / 9:16 / 4:5 / 1:1 / 16:9**: output shape. *Original* keeps your video's own ratio and just moves the camera with you (like CapCut tracking); 9:16 reframes for Reels and Shorts
    - **Zoom**: how tight the shot is
    - **Smoothness**: higher gives a slow, cinematic camera; lower snaps to fast movement
    - **Auto zoom**: keeps the subject the same size as they move closer or further away
@@ -22,7 +22,8 @@ Everything runs in your browser with Google's MediaPipe AI models. Your video is
 
 Tips
 - **Fast / Balanced / Precise** controls how many frames per second the AI looks at. Use *Precise* for quick dance moves or sports.
-- Face mode works best when the face is fairly close to the camera. For full-body or far-away shots, use **Body**.
+- Zoom must be above 1× for the camera to have room to move. Around 1.3–1.5× works well.
+- Face mode works best when the face is fairly close to the camera. For full-body or far-away shots, use **Body** (it uses the person detector, so it also works for small or partly hidden people).
 - Chrome and Safari on phones save **MP4**. Some desktop browsers save **WebM**.
 
 ## Getting a link
