@@ -177,8 +177,8 @@
           <div class="small">Podcast frame is always 9:16. The person sits in a framed window with the title above.</div>
         </div>
         <div class="small" id="aspectNote">Original keeps your video's shape.</div>
-        <label class="row">Zoom <output id="zoomOut">1.1×</output></label>
-        <input type="range" id="zoom" min="1" max="3" step="0.05" value="1.1">
+        <label class="row">Zoom <output id="zoomOut">1.15×</output></label>
+        <input type="range" id="zoom" min="1" max="3" step="0.05" value="1.15">
         <label class="row">Smoothness <output id="smoothOut">35%</output></label>
         <input type="range" id="smooth" min="0" max="100" step="1" value="35">
         <label class="check"><input type="checkbox" id="autoZoom"> Auto zoom (keep subject the same size)</label>
@@ -194,9 +194,9 @@
       <div class="panel">
         <h2>3 · Track and export</h2>
         <div class="seg" id="qualSeg">
-          <button data-v="8">Fast</button>
-          <button data-v="15">Balanced</button>
-          <button data-v="30" class="on">Precise</button>
+          <button data-v="3">Fast</button>
+          <button data-v="2" class="on">Balanced</button>
+          <button data-v="1">Precise</button>
         </div>
         <button class="btn" id="analyzeBtn" disabled>Start AI tracking</button>
         <div class="progress"><div id="bar"></div></div>
@@ -247,8 +247,8 @@ const view = $('view');
 const ctx = view.getContext('2d');
 
 const state = {
-  mode: 'face', aspect: 'orig', fx: 'none', sampleFps: 30, res: 720, layout: 'full', title1: '', title2: '',
-  zoom: 1.1, smooth: 0.35, autoZoom: false, objClass: '',
+  mode: 'face', aspect: 'orig', fx: 'none', sampleFps: 30, speed: 2, res: 720, layout: 'full', title1: '', title2: '',
+  zoom: 1.15, smooth: 0.35, autoZoom: false, objClass: '',
   cam: 'lock', lockSize: false, lockTilt: false,
   tap: null,          // {x, y} in video pixels, chosen subject
   track: null,        // analysed track, see analyze()
@@ -281,7 +281,7 @@ segment('layoutSeg', 'layout', String, () => {
   sizeCanvas(); redraw();
 });
 for (const id of ['title1', 'title2']) $(id).addEventListener('input', (e) => { state[id] = e.target.value; redraw(); });
-segment('qualSeg', 'sampleFps', Number, invalidateTrack);
+segment('qualSeg', 'speed', Number, invalidateTrack);
 segment('resSeg', 'res', Number, () => { sizeCanvas(); redraw(); });
 $('objClass').addEventListener('change', (e) => { state.objClass = e.target.value; invalidateTrack(); });
 
@@ -523,12 +523,73 @@ async function analyze() {
   redraw();
   state.busy = false;
   $('analyzeBtn').disabled = false; $('exportBtn').disabled = false;
-  const pct = Math.round(found / samples.length * 100);
+  const pct = Math.round((result.rate ?? found / samples.length) * 100);
   setStatus(`Done. Subject found in ${pct}% of frames. Press Play to preview, then Export.`, pct < 40 ? 'warn' : '');
 }
 
-// Steps through the video, detecting and following the subject frame by frame.
+// Plays the video through (muted, at 1-3x speed) and detects the subject on every frame the browser
+// shows. Much faster on phones than seeking to each frame. The results are then laid on a 30 fps grid;
+// grid frames without a detection are filled in later by interpolation.
 async function scan(task, mode) {
+  if (!hasRVFC) return scanBySeeking(task, mode);
+  const fps = state.sampleFps, dur = video.duration;
+  const raw = [];
+  let prev = null, lastSeen = -1e9, found = 0, shot = 0, lastThumb = null;
+  await seek(0);
+  video.muted = true;
+  video.playbackRate = state.speed;
+  const started = performance.now();
+  let lastFrameAt = performance.now();
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; clearInterval(watchdog); resolve(); } };
+    const onFrame = (_now, meta) => {
+      if (done) return;
+      lastFrameAt = performance.now();
+      const t = meta.mediaTime;
+      const thumb = thumbnail();
+      if (lastThumb && frameDiff(thumb, lastThumb) > 28) { shot++; prev = null; }
+      lastThumb = thumb;
+      let boxes = [];
+      try { boxes = detect(task, mode); } catch (err) { console.warn('detect failed', err); }
+      const target = pickTarget(boxes, prev);
+      if (target) { prev = target; lastSeen = t; found++; }
+      else if (t - lastSeen > 1.5) prev = null;   // lost for 1.5s: reacquire freely
+      raw.push({ t, box: target, shot });
+      if (raw.length % 4 === 1) {
+        drawSource(); drawDetections(boxes, target);
+        const p = Math.min(1, t / dur);
+        const eta = p > 0.02 ? (performance.now() - started) / p * (1 - p) / 1000 : 0;
+        setProgress(p);
+        setStatus(`Tracking ${Math.round(p * 100)}%${eta ? ` · about ${Math.ceil(eta)}s left` : ''}`);
+      }
+      if (video.ended || t >= dur - 0.04) return finish();
+      video.requestVideoFrameCallback(onFrame);
+    };
+    const watchdog = setInterval(() => {
+      if (video.ended || performance.now() - lastFrameAt > 8000) finish();
+    }, 500);
+    video.requestVideoFrameCallback(onFrame);
+    video.play().catch(finish);
+  });
+  video.pause();
+  video.playbackRate = 1;
+
+  const n = Math.max(2, Math.floor(dur * fps) + 1);
+  const samples = [];
+  let j = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / fps;
+    while (j + 1 < raw.length && Math.abs(raw[j + 1].t - t) <= Math.abs(raw[j].t - t)) j++;
+    const r = raw[j];
+    const near = r && Math.abs(r.t - t) <= 0.5 / fps + 1e-3;
+    samples.push({ t, box: near ? r.box : null, shot: r ? r.shot : 0 });
+  }
+  return { samples, found, rate: raw.length ? found / raw.length : 0 };
+}
+
+// Fallback for browsers that can't report each played frame: seek to every frame instead.
+async function scanBySeeking(task, mode) {
   const dur = video.duration;
   const step = 1 / state.sampleFps;
   const n = Math.max(2, Math.floor(dur / step) + 1);
@@ -791,12 +852,17 @@ function drawLocked(t, r) {
   const ax = r.x + (ref.cx - bx) * s0, ay = r.y + (ref.cy - by) * s0;   // where the subject sits on screen
 
   // Live subject pose, blended toward the reference when the subject is off screen.
-  const fx = ref.cx + (sampleAt(L.cx, t) - ref.cx) * on;
-  const fy = ref.cy + (sampleAt(L.cy, t) - ref.cy) * on;
+  let fx = ref.cx + (sampleAt(L.cx, t) - ref.cx) * on;
+  let fy = ref.cy + (sampleAt(L.cy, t) - ref.cy) * on;
   const ratio = state.lockSize ? Math.min(1.25, Math.max(0.8, ref.size / Math.max(4, sampleAt(L.size, t)))) : 1;
-  const scale = s0 * Math.pow(ratio, on);
   const rot = state.lockTilt && state.mode === 'face'
     ? -Math.max(-0.35, Math.min(0.35, sampleAt(L.angle, t) - ref.angle)) * on : 0;
+  // Like a real camera, the frame only moves within the video: never shrink below "fills the frame"
+  // and never pan past an edge. (Tilt can still show soft edges at the corners.)
+  const scale = Math.max(s0 * Math.pow(ratio, on), r.w / W, r.h / H);
+  const clampTo = (v, lo, hi) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)));
+  fx = clampTo(fx, (ax - r.x) / scale, W - (r.x + r.w - ax) / scale);
+  fy = clampTo(fy, (ay - r.y) / scale, H - (r.y + r.h - ay) / scale);
 
   ctx.save();
   ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
@@ -1006,7 +1072,7 @@ function finishExport(blob, ext) {
 // Renders every frame exactly, one at a time, and encodes an MP4 with the original sound.
 // Unlike live recording, a slow phone can't drop frames, so the output is as smooth as the input.
 // Returns null when this browser has no video encoder (then the caller records live instead).
-async function exportFrameByFrame() {
+async function exportFrameByFrame(rate) {
   if (!window.VideoEncoder || !window.VideoFrame) return null;
   const W = view.width, H = view.height, fps = 30;
   const bitrate = Math.max(W, H) >= 1600 ? 12e6 : 8e6;
@@ -1048,8 +1114,31 @@ async function exportFrameByFrame() {
   venc.configure(vcfg);
 
   const n = Math.max(1, Math.floor(video.duration * fps));
+  if (hasRVFC && rate === undefined) {
+    // Time how fast this device renders and encodes a frame, and play the clip just slowly enough
+    // that it can keep up with every frame.
+    const probe = new VideoEncoder({ output: () => {}, error: () => {} });
+    probe.configure(vcfg);
+    await seek(Math.min(1, video.duration / 2));
+    const t0 = performance.now();
+    for (let i = 0; i < 20; i++) {
+      renderFrame(video.currentTime);
+      const f = new VideoFrame(view, { timestamp: i * 33333 });
+      probe.encode(f, { keyFrame: i === 0 });
+      f.close();
+    }
+    await probe.flush();
+    probe.close();
+    const perFrame = (performance.now() - t0) / 20 / 1000;
+    rate = Math.max(0.1, Math.min(1, 1 / (perFrame * fps * 1.4)));
+  }
   const started = performance.now();
-  for (let i = 0; i < n; i++) {
+  if (hasRVFC) {
+    // Play the clip and encode each frame as the browser shows it. A grid frame the browser skipped
+    // reuses the nearest picture; if too many were skipped, try again at a slower speed.
+    await encodeByPlayback(venc, n, fps, rate, started);
+    if (failure) throw failure;
+  } else for (let i = 0; i < n; i++) {
     if (failure) throw failure;
     const t = i / fps;
     await seek(t);
@@ -1087,6 +1176,72 @@ async function exportFrameByFrame() {
   muxer.finalize();
   await seek(0); redraw();
   return { blob: new Blob([target.buffer], { type: 'video/mp4' }) };
+}
+
+// Plays the clip and encodes each frame as the browser shows it. If the device falls behind and the
+// browser skips frames, it pauses, fetches exactly those frames by seeking, slows playback a little and
+// carries on; when it keeps up for a while it speeds back up. Every output frame is the right picture.
+async function encodeByPlayback(venc, n, fps, rate, started) {
+  await seek(0);
+  video.muted = true;
+  video.playbackRate = rate;
+  let k = 0, lastFrameAt = performance.now(), cleanSince = performance.now(), busy = false;
+  const emit = () => {
+    const t = k / fps;
+    renderFrame(t);
+    const frame = new VideoFrame(view, { timestamp: Math.round(t * 1e6), duration: Math.round(1e6 / fps) });
+    venc.encode(frame, { keyFrame: k % (fps * 2) === 0 });
+    frame.close();
+    k++;
+  };
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; clearInterval(watchdog); resolve(); } };
+    const onFrame = async (_now, meta) => {
+      if (done || busy) return;
+      busy = true;
+      lastFrameAt = performance.now();
+      const m = meta.mediaTime;
+      if (k < n && k / fps < m - 0.5 / fps) {
+        // Skipped frames: go back for them one by one, then continue more slowly.
+        video.pause();
+        while (k < n && k / fps <= m + 0.5 / fps) { await seek(k / fps); emit(); }
+        rate = Math.max(0.1, rate * 0.7);
+        video.playbackRate = rate;
+        cleanSince = performance.now();
+        lastFrameAt = performance.now();
+        if (k < n && !video.ended) video.play().catch(finish);
+      } else {
+        while (k < n && k / fps <= m + 0.5 / fps) emit();
+        if (rate < 1 && performance.now() - cleanSince > 3000) {
+          rate = Math.min(1, rate * 1.15);
+          video.playbackRate = rate;
+          cleanSince = performance.now();
+        }
+      }
+      const p = k / n;
+      const eta = p > 0.02 ? (performance.now() - started) / p * (1 - p) / 1000 : 0;
+      setProgress(p);
+      setStatus(`Exporting ${Math.round(p * 100)}%${eta ? ` · about ${Math.ceil(eta)}s left` : ''}`);
+      if (venc.encodeQueueSize > 8) {
+        video.pause();
+        while (venc.encodeQueueSize > 2) await new Promise((r) => setTimeout(r, 5));
+        lastFrameAt = performance.now();
+        if (!video.ended) video.play().catch(finish);
+      }
+      busy = false;
+      if (k >= n || video.ended) return finish();
+      video.requestVideoFrameCallback(onFrame);
+    };
+    const watchdog = setInterval(() => {
+      if (!busy && (video.ended || performance.now() - lastFrameAt > 8000)) finish();
+    }, 500);
+    video.requestVideoFrameCallback(onFrame);
+    video.play().catch(finish);
+  });
+  video.pause();
+  video.playbackRate = 1;
+  while (k < n) { await seek(Math.min(k / fps, video.duration - 0.001)); emit(); }   // any frames left at the end
 }
 
 // Fallback for browsers without WebCodecs: play the clip once and record the canvas live.
