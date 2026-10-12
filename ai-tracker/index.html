@@ -149,6 +149,16 @@
 
       <div class="panel">
         <h2>2 · Look</h2>
+        <div class="seg" id="camSeg">
+          <button data-v="lock" class="on">Camera lock-on</button>
+          <button data-v="follow">Gentle follow</button>
+        </div>
+        <div id="lockOpts">
+          <label class="check"><input type="checkbox" id="lockSize" checked> Zoom with me when I lean in or back</label>
+          <label class="check"><input type="checkbox" id="lockTilt" checked> Rotate with my head tilt (Face only)</label>
+          <div class="small">Lock-on pins your face in one spot, so the whole frame moves, zooms and tilts with you, like a camera operator following you.</div>
+        </div>
+        <h2 style="margin-top:14px">Shape</h2>
         <div class="seg" id="aspectSeg">
           <button data-v="orig" class="on">Original</button>
           <button data-v="9:16">9:16</button>
@@ -166,7 +176,7 @@
           <input type="text" id="title2" maxlength="40" placeholder="Red line 2, e.g. What You Repeat" aria-label="Title line 2">
           <div class="small">Podcast frame is always 9:16. The person sits in a framed window with the title above.</div>
         </div>
-        <div class="small" id="aspectNote">Original keeps your video's shape. The camera zooms in a little and moves with you.</div>
+        <div class="small" id="aspectNote">Original keeps your video's shape.</div>
         <label class="row">Zoom <output id="zoomOut">1.4×</output></label>
         <input type="range" id="zoom" min="1" max="3" step="0.05" value="1.4">
         <label class="row">Smoothness <output id="smoothOut">25%</output></label>
@@ -175,7 +185,7 @@
         <h2 style="margin-top:14px">Effect overlay</h2>
         <div class="seg" id="fxSeg">
           <button data-v="none" class="on">None</button>
-          <button data-v="hud">Lock-on</button>
+          <button data-v="hud">Target</button>
           <button data-v="box">Box</button>
           <button data-v="spot">Spotlight</button>
         </div>
@@ -238,6 +248,7 @@ const ctx = view.getContext('2d');
 const state = {
   mode: 'face', aspect: 'orig', fx: 'none', sampleFps: 15, res: 720, layout: 'full', title1: '', title2: '',
   zoom: 1.4, smooth: 0.25, autoZoom: false, objClass: '',
+  cam: 'lock', lockSize: true, lockTilt: true,
   tap: null,          // {x, y} in video pixels, chosen subject
   track: null,        // analysed track, see analyze()
   busy: false, playing: false, exporting: false,
@@ -261,6 +272,8 @@ segment('modeSeg', 'mode', String, () => {
 });
 segment('aspectSeg', 'aspect', String, () => { sizeCanvas(); redraw(); });
 segment('fxSeg', 'fx', String, redraw);
+segment('camSeg', 'cam', String, () => { $('lockOpts').classList.toggle('hidden', state.cam !== 'lock'); redraw(); });
+for (const id of ['lockSize', 'lockTilt']) $(id).addEventListener('change', (e) => { state[id] = e.target.checked; redraw(); });
 segment('layoutSeg', 'layout', String, () => {
   $('titleBox').classList.toggle('hidden', state.layout !== 'window');
   $('aspectSeg').querySelectorAll('button').forEach((b) => (b.disabled = state.layout === 'window'));
@@ -424,10 +437,14 @@ async function getTask(mode, delegate = modelKind(mode) === 'object' ? 'CPU' : '
 
 // Returns a list of {x, y, w, h, score, label} boxes in video pixels.
 function detect(task, mode) {
+  const W = video.videoWidth, H = video.videoHeight;
   const r = task.detect(video);
   return (r.detections || []).map((d) => {
     const b = d.boundingBox, c = d.categories?.[0];
-    return { x: b.originX, y: b.originY, w: b.width, h: b.height, score: c?.score ?? 0.9, label: mode === 'face' ? 'face' : (c?.categoryName || 'object') };
+    // Face keypoints 0 and 1 are the eyes; the line between them gives the head tilt.
+    const k = d.keypoints;
+    const angle = mode === 'face' && k?.length >= 2 ? Math.atan2((k[1].y - k[0].y) * H, (k[1].x - k[0].x) * W) : 0;
+    return { x: b.originX, y: b.originY, w: b.width, h: b.height, angle, score: c?.score ?? 0.9, label: mode === 'face' ? 'face' : (c?.categoryName || 'object') };
   }).filter((b) => (mode === 'body' ? b.label === 'person' : mode !== 'object' || !state.objClass || b.label === state.objClass));
 }
 
@@ -556,7 +573,7 @@ function frameDiff(a, b) {
 // Shots with no subject at all get the frame centre (the camera shows the whole frame there anyway).
 function fillGaps(samples) {
   const W = video.videoWidth, H = video.videoHeight;
-  const out = samples.map((s) => s.box && { cx: s.box.x + s.box.w / 2, cy: s.box.y + s.box.h / 2, w: s.box.w, h: s.box.h });
+  const out = samples.map((s) => s.box && { cx: s.box.x + s.box.w / 2, cy: s.box.y + s.box.h / 2, w: s.box.w, h: s.box.h, angle: s.box.angle || 0 });
   const idx = out.map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
   for (let i = 0; i < out.length; i++) {
     if (out[i]) continue;
@@ -564,7 +581,7 @@ function fillGaps(samples) {
     let a = idx.filter((j) => j < i).pop(), b = idx.find((j) => j > i);
     if (a !== undefined && samples[a].shot !== sh) a = undefined;
     if (b !== undefined && samples[b].shot !== sh) b = undefined;
-    if (a === undefined && b === undefined) out[i] = { cx: W / 2, cy: H / 2, w: W * 0.3, h: H * 0.3 };
+    if (a === undefined && b === undefined) out[i] = { cx: W / 2, cy: H / 2, w: W * 0.3, h: H * 0.3, angle: 0 };
     else if (a === undefined) out[i] = { ...out[b] };
     else if (b === undefined) out[i] = { ...out[a] };
     else {
@@ -612,6 +629,24 @@ function rebuildPath() {
   const box = { cx: g(ch('cx'), lite), cy: g(ch('cy'), lite), w: g(ch('w'), lite), h: g(ch('h'), lite) };
   // Overlay opacity: fades out where the subject wasn't actually seen (e.g. before it enters the shot).
   const vis = g(seen, Math.max(0.6, fps * 0.15)).map((v) => Math.min(1, v * 1.6));
+  // Lock-on: follow every move closely. The reference is the subject's typical position, size and tilt
+  // in each shot; the camera moves so the subject always looks the way it does there.
+  const ls = fps * (0.02 + state.smooth * 0.4);
+  const med = (arr) => { const a = arr.slice().sort((x, y) => x - y); return a[a.length >> 1]; };
+  const refs = {};
+  for (const shot of new Set(shots)) {
+    const seenRaw = tr.raw.filter((_, i) => shots[i] === shot && tr.samples[i].box);
+    refs[shot] = seenRaw.length ? {
+      cx: med(seenRaw.map((v) => v.cx)), cy: med(seenRaw.map((v) => v.cy)),
+      size: med(seenRaw.map((v) => Math.max(v.w, v.h))), angle: med(seenRaw.map((v) => v.angle)),
+    } : null;
+  }
+  tr.lock = {
+    cx: g(ch('cx'), ls), cy: g(ch('cy'), ls),
+    size: g(ch('h').map((h, i) => Math.max(h, tr.raw[i].w)), ls * 1.5),
+    angle: g(ch('angle'), ls * 2),
+    ref: shots.map((sh) => refs[sh]),
+  };
   tr.cam = cam; tr.box = box; tr.vis = vis;
   if (!state.playing) redraw();
 }
@@ -699,22 +734,78 @@ function redraw() {
 }
 
 function renderFrame(t) {
-  const c = cropAt(t);
   const r = windowRect();
   if (state.layout === 'window') { ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, view.width, view.height); }
-  ctx.drawImage(video, c.x, c.y, c.w, c.h, r.x, r.y, r.w, r.h);
+  // toView maps a video point to the canvas; scale is canvas pixels per video pixel.
+  let toView, scale;
+  if (state.cam === 'lock') ({ toView, scale } = drawLocked(t, r));
+  else {
+    const c = cropAt(t);
+    ctx.drawImage(video, c.x, c.y, c.w, c.h, r.x, r.y, r.w, r.h);
+    scale = r.w / c.w;
+    toView = (x, y) => [r.x + (x - c.x) * scale, r.y + (y - c.y) * scale];
+  }
   ctx.save();
   ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
   const alpha = state.fx === 'none' ? 0 : sampleAt(state.track.vis, t);
   if (alpha >= 0.02) {
-    const tb = state.track.box, s = r.w / c.w;
-    const bw = sampleAt(tb.w, t) * s, bh = sampleAt(tb.h, t) * s;
-    const bx = r.x + (sampleAt(tb.cx, t) - c.x) * s - bw / 2, by = r.y + (sampleAt(tb.cy, t) - c.y) * s - bh / 2;
+    const tb = state.track.box;
+    const bw = sampleAt(tb.w, t) * scale, bh = sampleAt(tb.h, t) * scale;
+    const [vx, vy] = toView(sampleAt(tb.cx, t), sampleAt(tb.cy, t));
     ctx.globalAlpha = alpha;
-    drawEffect(state.fx, bx, by, bw, bh, t);
+    drawEffect(state.fx, vx - bw / 2, vy - bh / 2, bw, bh, t);
   }
   ctx.restore();
   if (state.layout === 'window') drawFrameLayout(r);
+}
+
+// Camera lock-on: move, zoom and rotate the whole frame so the subject stays exactly where (and as big,
+// and as upright as) it usually is in this shot. Edges uncovered by the moving frame show a soft,
+// darkened copy of the video instead of black.
+const bgCanvas = document.createElement('canvas');
+bgCanvas.width = 48; bgCanvas.height = 48;
+const bgCtx = bgCanvas.getContext('2d');
+function drawLocked(t, r) {
+  const W = video.videoWidth, H = video.videoHeight, L = state.track.lock;
+  const i = Math.max(0, Math.min(L.ref.length - 1, Math.round(t * state.sampleFps)));
+  const ref = L.ref[i] || { cx: W / 2, cy: H / 2, size: 1, angle: 0 };
+  const on = L.ref[i] ? sampleAt(state.track.cam.on, t) : 0;
+
+  // Base framing: the zoomed crop around the subject's usual spot, kept inside the video.
+  const a = r.w / r.h;
+  let cw = W, chh = W / a;
+  if (chh > H) { chh = H; cw = H * a; }
+  cw /= state.zoom; chh /= state.zoom;
+  let bcx = ref.cx, bcy = ref.cy + (state.mode === 'face' ? chh * 0.08 : 0);
+  const bx = Math.max(0, Math.min(W - cw, bcx - cw / 2)), by = Math.max(0, Math.min(H - chh, bcy - chh / 2));
+  const s0 = r.w / cw;
+  const ax = r.x + (ref.cx - bx) * s0, ay = r.y + (ref.cy - by) * s0;   // where the subject sits on screen
+
+  // Live subject pose, blended toward the reference when the subject is off screen.
+  const fx = ref.cx + (sampleAt(L.cx, t) - ref.cx) * on;
+  const fy = ref.cy + (sampleAt(L.cy, t) - ref.cy) * on;
+  const ratio = state.lockSize ? Math.min(2, Math.max(0.5, ref.size / Math.max(4, sampleAt(L.size, t)))) : 1;
+  const scale = s0 * Math.pow(ratio, on);
+  const rot = state.lockTilt && state.mode === 'face'
+    ? -Math.max(-0.6, Math.min(0.6, sampleAt(L.angle, t) - ref.angle)) * on : 0;
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
+  const cover = Math.max(48 / W, 48 / H);
+  bgCtx.drawImage(video, (48 - W * cover) / 2, (48 - H * cover) / 2, W * cover, H * cover);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bgCanvas, r.x, r.y, r.w, r.h);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(r.x, r.y, r.w, r.h);
+  ctx.translate(ax, ay); ctx.rotate(rot); ctx.scale(scale, scale); ctx.translate(-fx, -fy);
+  ctx.drawImage(video, 0, 0, W, H);
+  ctx.restore();
+
+  const cos = Math.cos(rot), sin = Math.sin(rot);
+  const toView = (x, y) => {
+    const dx = (x - fx) * scale, dy = (y - fy) * scale;
+    return [ax + dx * cos - dy * sin, ay + dx * sin + dy * cos];
+  };
+  return { toView, scale };
 }
 
 // Podcast frame: the window's top and bottom edges fade into black, with a two-line title above.
