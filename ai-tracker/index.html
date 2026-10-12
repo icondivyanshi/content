@@ -154,8 +154,8 @@
           <button data-v="follow">Gentle follow</button>
         </div>
         <div id="lockOpts">
-          <label class="check"><input type="checkbox" id="lockSize" checked> Zoom with me when I lean in or back</label>
-          <label class="check"><input type="checkbox" id="lockTilt" checked> Rotate with my head tilt (Face only)</label>
+          <label class="check"><input type="checkbox" id="lockSize"> Zoom with me when I lean in or back</label>
+          <label class="check"><input type="checkbox" id="lockTilt"> Rotate with my head tilt (Face only)</label>
           <div class="small">Lock-on pins your face in one spot, so the whole frame moves, zooms and tilts with you, like a camera operator following you.</div>
         </div>
         <h2 style="margin-top:14px">Shape</h2>
@@ -177,10 +177,10 @@
           <div class="small">Podcast frame is always 9:16. The person sits in a framed window with the title above.</div>
         </div>
         <div class="small" id="aspectNote">Original keeps your video's shape.</div>
-        <label class="row">Zoom <output id="zoomOut">1.4×</output></label>
-        <input type="range" id="zoom" min="1" max="3" step="0.05" value="1.4">
-        <label class="row">Smoothness <output id="smoothOut">25%</output></label>
-        <input type="range" id="smooth" min="0" max="100" step="1" value="25">
+        <label class="row">Zoom <output id="zoomOut">1.2×</output></label>
+        <input type="range" id="zoom" min="1" max="3" step="0.05" value="1.2">
+        <label class="row">Smoothness <output id="smoothOut">15%</output></label>
+        <input type="range" id="smooth" min="0" max="100" step="1" value="15">
         <label class="check"><input type="checkbox" id="autoZoom"> Auto zoom (keep subject the same size)</label>
         <h2 style="margin-top:14px">Effect overlay</h2>
         <div class="seg" id="fxSeg">
@@ -195,8 +195,8 @@
         <h2>3 · Track and export</h2>
         <div class="seg" id="qualSeg">
           <button data-v="8">Fast</button>
-          <button data-v="15" class="on">Balanced</button>
-          <button data-v="30">Precise</button>
+          <button data-v="15">Balanced</button>
+          <button data-v="30" class="on">Precise</button>
         </div>
         <button class="btn" id="analyzeBtn" disabled>Start AI tracking</button>
         <div class="progress"><div id="bar"></div></div>
@@ -246,9 +246,9 @@ const view = $('view');
 const ctx = view.getContext('2d');
 
 const state = {
-  mode: 'face', aspect: 'orig', fx: 'none', sampleFps: 15, res: 720, layout: 'full', title1: '', title2: '',
-  zoom: 1.4, smooth: 0.25, autoZoom: false, objClass: '',
-  cam: 'lock', lockSize: true, lockTilt: true,
+  mode: 'face', aspect: 'orig', fx: 'none', sampleFps: 30, res: 720, layout: 'full', title1: '', title2: '',
+  zoom: 1.2, smooth: 0.15, autoZoom: false, objClass: '',
+  cam: 'lock', lockSize: false, lockTilt: false,
   tap: null,          // {x, y} in video pixels, chosen subject
   track: null,        // analysed track, see analyze()
   busy: false, playing: false, exporting: false,
@@ -348,12 +348,17 @@ function once(el, ev, timeout = 10000) {
     el.addEventListener(ev, h, { once: true });
   });
 }
+const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
 async function seek(t) {
   t = Math.max(0, Math.min(t, video.duration - 0.001));
   if (Math.abs(video.currentTime - t) < 1e-4 && video.readyState >= 2) return;
   const p = once(video, 'seeked', 10000);
+  // Some phones fire 'seeked' before the new frame is decoded, so the AI would see the previous
+  // frame and the camera would trail behind. Wait for the frame itself where the browser can tell us.
+  const frame = hasRVFC ? new Promise((res) => { video.requestVideoFrameCallback(() => res()); setTimeout(res, 400); }) : null;
   video.currentTime = t;
   await p;
+  if (frame) await frame;
 }
 
 // Tap on the canvas to pick which subject to follow.
@@ -631,7 +636,9 @@ function rebuildPath() {
   const vis = g(seen, Math.max(0.6, fps * 0.15)).map((v) => Math.min(1, v * 1.6));
   // Lock-on: follow every move closely. The reference is the subject's typical position, size and tilt
   // in each shot; the camera moves so the subject always looks the way it does there.
-  const ls = fps * (0.02 + state.smooth * 0.4);
+  // Position follows almost frame-for-frame (just enough smoothing to remove detector jitter);
+  // size and tilt are noisier, so they are smoothed much more to avoid a "breathing" camera.
+  const ls = fps * (0.01 + state.smooth * 0.3);
   const med = (arr) => { const a = arr.slice().sort((x, y) => x - y); return a[a.length >> 1]; };
   const refs = {};
   for (const shot of new Set(shots)) {
@@ -643,8 +650,8 @@ function rebuildPath() {
   }
   tr.lock = {
     cx: g(ch('cx'), ls), cy: g(ch('cy'), ls),
-    size: g(ch('h').map((h, i) => Math.max(h, tr.raw[i].w)), ls * 1.5),
-    angle: g(ch('angle'), ls * 2),
+    size: g(ch('h').map((h, i) => Math.max(h, tr.raw[i].w)), Math.max(ls * 4, fps * 0.25)),
+    angle: g(ch('angle'), Math.max(ls * 4, fps * 0.25)),
     ref: shots.map((sh) => refs[sh]),
   };
   tr.cam = cam; tr.box = box; tr.vis = vis;
@@ -784,10 +791,10 @@ function drawLocked(t, r) {
   // Live subject pose, blended toward the reference when the subject is off screen.
   const fx = ref.cx + (sampleAt(L.cx, t) - ref.cx) * on;
   const fy = ref.cy + (sampleAt(L.cy, t) - ref.cy) * on;
-  const ratio = state.lockSize ? Math.min(2, Math.max(0.5, ref.size / Math.max(4, sampleAt(L.size, t)))) : 1;
+  const ratio = state.lockSize ? Math.min(1.25, Math.max(0.8, ref.size / Math.max(4, sampleAt(L.size, t)))) : 1;
   const scale = s0 * Math.pow(ratio, on);
   const rot = state.lockTilt && state.mode === 'face'
-    ? -Math.max(-0.6, Math.min(0.6, sampleAt(L.angle, t) - ref.angle)) * on : 0;
+    ? -Math.max(-0.35, Math.min(0.35, sampleAt(L.angle, t) - ref.angle)) * on : 0;
 
   ctx.save();
   ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
@@ -883,7 +890,6 @@ function drawEffect(fx, x, y, w, h, t) {
 // ---------- Playback and preview ----------
 const scrub = $('scrub');
 let loopHandle = 0;
-const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
 
 function schedule(fn) {
   loopHandle = hasRVFC ? video.requestVideoFrameCallback(fn) : requestAnimationFrame(fn);
