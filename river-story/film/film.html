@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="hi"><head><meta charset="utf-8"><title>पत्थरों के पार — film</title>
+<style>
+@font-face{font-family:'Amita';src:url(fonts/amita-devanagari-700-normal.woff2);font-weight:700}
+@font-face{font-family:'Amita';src:url(fonts/amita-latin-700-normal.woff2);font-weight:700}
+@font-face{font-family:'Rozha One';src:url(fonts/rozha-one-devanagari-400-normal.woff2)}
+@font-face{font-family:'Rozha One';src:url(fonts/rozha-one-latin-400-normal.woff2)}
+html,body{margin:0;background:#000}
+canvas{display:block}
+</style></head>
+<body><canvas id="cv" width="1080" height="1080"></canvas>
+<script>
+// Madhubani-style hand-drawn film. window.drawFrame(f) renders frame f at 30 fps.
+const W = 1080, H = 1080, FPS = 30;
+const INK = '#1b120b', PAPER = '#efe0bf', VERM = '#c4361b', TURM = '#e2a11b', INDI = '#233f78',
+  LEAF = '#3e7b3a', PINK = '#d75a7b', OCHRE = '#b98b4e', STONE = '#a69a82', SKY = '#86b6c6', WATER = '#c7d9cc';
+
+let BOIL = 0; // changes every 3 frames -> "boiling" hand-drawn line
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const ease = (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+const E = (t, a, b) => ease(clamp((t - a) / (b - a)));
+function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+function hash(n) { const x = Math.sin(n * 127.1 + BOIL * 311.7) * 43758.5453; return x - Math.floor(x); }
+const J = (n) => hash(n) * 2 - 1;
+function pxk(c) { const m = c.getTransform(); return Math.hypot(m.a, m.b); }
+function mixHex(a, b, t) {
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const ch = (s) => Math.round(lerp((pa >> s) & 255, (pb >> s) & 255, t));
+  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
+}
+
+// --- ink primitive: jittered, smoothed path; line weight constant in screen px
+function ink(c, pts, o = {}) {
+  const { close = true, fill = null, stroke = INK, lw = 2.6, jit = 1.1, seed = 0, alpha = 1 } = o;
+  const k = pxk(c), j = jit / k;
+  const P = pts.map((p, i) => [p[0] + J(seed + i * 1.7) * j, p[1] + J(seed + i * 2.3 + 50) * j]);
+  c.beginPath();
+  if (close) {
+    const n = P.length, m = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const s = m(P[n - 1], P[0]); c.moveTo(s[0], s[1]);
+    for (let i = 0; i < n; i++) { const q = m(P[i], P[(i + 1) % n]); c.quadraticCurveTo(P[i][0], P[i][1], q[0], q[1]); }
+    c.closePath();
+  } else {
+    c.moveTo(P[0][0], P[0][1]);
+    for (let i = 1; i < P.length - 1; i++) { const q = [(P[i][0] + P[i + 1][0]) / 2, (P[i][1] + P[i + 1][1]) / 2]; c.quadraticCurveTo(P[i][0], P[i][1], q[0], q[1]); }
+    const L = P[P.length - 1]; c.lineTo(L[0], L[1]);
+  }
+  c.save(); c.globalAlpha *= alpha;
+  if (fill) { c.fillStyle = fill; c.fill(); }
+  if (stroke && lw > 0) { c.strokeStyle = stroke; c.lineWidth = lw / k; c.lineCap = 'round'; c.lineJoin = 'round'; c.stroke(); }
+  c.restore();
+}
+function ell(cx, cy, rx, ry, n = 40, wob = 0, ph = 0) {
+  const p = []; for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2, r = 1 + wob * Math.sin(5 * a + ph); p.push([cx + Math.cos(a) * rx * r, cy + Math.sin(a) * ry * r]); } return p;
+}
+function line(c, x1, y1, x2, y2, o = {}) {
+  const n = Math.max(2, Math.round(Math.hypot(x2 - x1, y2 - y1) / 30)); const p = [];
+  for (let i = 0; i <= n; i++) p.push([lerp(x1, x2, i / n), lerp(y1, y2, i / n)]);
+  ink(c, p, { close: false, ...o });
+}
+
+// --- paper
+const TXT = document.createElement('canvas'); TXT.width = W; TXT.height = H;
+const paper = document.createElement('canvas'); paper.width = W; paper.height = H;
+(() => {
+  const p = paper.getContext('2d'); p.fillStyle = PAPER; p.fillRect(0, 0, W, H);
+  const R = rng(7);
+  for (let i = 0; i < 26000; i++) { const v = R(); p.fillStyle = v < 0.5 ? 'rgba(120,85,40,.07)' : 'rgba(255,250,235,.10)'; p.fillRect(R() * W, R() * H, 1 + R() * 2, 1 + R() * 2); }
+  p.strokeStyle = 'rgba(120,85,40,.10)'; p.lineWidth = 1;
+  for (let i = 0; i < 420; i++) { const x = R() * W, y = R() * H, a = R() * 6.28, l = 6 + R() * 22; p.beginPath(); p.moveTo(x, y); p.quadraticCurveTo(x + Math.cos(a) * l / 2 + R() * 4, y + Math.sin(a) * l / 2, x + Math.cos(a) * l, y + Math.sin(a) * l); p.stroke(); }
+  for (let i = 0; i < 30; i++) { const g = p.createRadialGradient(0, 0, 0, 0, 0, 1); p.save(); p.translate(R() * W, R() * H); p.scale(40 + R() * 90, 30 + R() * 60); g.addColorStop(0, 'rgba(150,105,50,.07)'); g.addColorStop(1, 'rgba(150,105,50,0)'); p.fillStyle = g; p.beginPath(); p.arc(0, 0, 1, 0, 7); p.fill(); p.restore(); }
+  const v = p.createRadialGradient(W / 2, H / 2, W * 0.35, W / 2, H / 2, W * 0.75); v.addColorStop(0, 'rgba(90,55,20,0)'); v.addColorStop(1, 'rgba(90,55,20,.28)'); p.fillStyle = v; p.fillRect(0, 0, W, H);
+})();
+
+// --- fish
+const BODY = (() => {
+  const top = [], bot = [];
+  for (let i = 0; i <= 14; i++) { const u = i / 14, x = 100 - 170 * u, y = 46 * Math.pow(Math.sin(Math.PI * Math.pow(u, 0.68)), 0.85); top.push([x, -y]); if (i > 0 && i < 14) bot.push([x, y * 0.9]); }
+  return top.concat(bot.reverse());
+})();
+const BODY_IN = BODY.map(([x, y]) => [15 + (x - 15) * 0.84, y * 0.8]);
+function fish(c, o) {
+  const { x, y, rot = 0, s = 1, col = VERM, band = TURM, detail = 1, eye = 'open', alpha = 1, seed = 0, lw = 2.4, wig = 0, barbels = false, mouth = 0 } = o;
+  if (alpha <= 0.01) return;
+  c.save(); c.translate(x, y); c.rotate(rot);
+  const up = Math.cos(rot) < 0 ? -1 : 1; c.scale(s, s * up);
+  c.globalAlpha *= alpha;
+  const sd = seed * 13;
+  const ta = wig, tp = (p) => { const dx = p[0] + 62, dy = p[1]; return [-62 + dx * Math.cos(ta) - dy * Math.sin(ta), dx * Math.sin(ta) + dy * Math.cos(ta)]; };
+  const tail = [[-62, 0], [-122, -50], [-108, -14], [-104, 0], [-108, 14], [-122, 50]].map(tp);
+  ink(c, tail, { fill: band, lw, seed: sd + 1 });
+  if (detail) {
+    for (let k = -3; k <= 3; k++) { const e = tp([-118, k * 13]); ink(c, [tp([-70, 0]), e], { close: false, lw: lw * 0.6, seed: sd + 10 + k }); }
+    ink(c, [[22, -40], [-4, -74], [-30, -38]], { fill: col, lw, seed: sd + 3 });
+    for (let k = 0; k < 4; k++) ink(c, [[14 - k * 11, -40], [-4 - k * 6, -66 + k * 6]], { close: false, lw: lw * 0.55, seed: sd + 20 + k });
+    ink(c, [[12, 37], [-6, 64], [-26, 35]], { fill: band, lw, seed: sd + 4 });
+  }
+  ink(c, BODY, { fill: col, lw, seed: sd + 5 });
+  if (detail) {
+    c.save(); ink(c, BODY, { stroke: null, seed: sd + 5 }); c.clip();
+    ink(c, [[-4, -48], [12, -48], [10, 48], [-6, 48]], { fill: band, lw: lw * 0.7, seed: sd + 6 });
+    c.strokeStyle = INK; c.lineWidth = lw * 0.55 / pxk(c);
+    for (let gx = -58, row = 0; gx < -6; gx += 13, row++) for (let gy = -48 + (row % 2) * 6; gy < 48; gy += 12) { c.beginPath(); c.arc(gx + J(sd + gx * 3 + gy) * 0.6, gy, 6, -Math.PI / 2, Math.PI / 2); c.stroke(); }
+    c.fillStyle = INK; for (let gy = -36; gy <= 36; gy += 9) { c.beginPath(); c.arc(4, gy, 1.7, 0, 7); c.fill(); }
+    for (let gx = 20; gx < 48; gx += 9) for (let gy = -28; gy <= 28; gy += 14) { c.beginPath(); c.arc(gx, gy + (gx % 2) * 4, 1.4, 0, 7); c.fill(); }
+    c.restore();
+    ink(c, BODY_IN, { lw: lw * 0.6, seed: sd + 7 });
+    ink(c, [[54, -34], [46, 0], [54, 34]], { close: false, lw: lw * 0.8, seed: sd + 8 });
+    ink(c, [[62, -28], [56, 0], [62, 28]], { close: false, lw: lw * 0.6, seed: sd + 9 });
+  }
+  // eye
+  const er = detail ? 12 : 9;
+  if (eye === 'closed') {
+    ink(c, [[64, -10], [74, -18], [86, -10]], { close: false, lw: lw * 1.1, seed: sd + 30 });
+  } else {
+    ink(c, ell(75, -9, er * (eye === 'scared' ? 1.2 : 1), er * (eye === 'scared' ? 1.2 : 1), 14), { fill: PAPER, lw, seed: sd + 31 });
+    c.fillStyle = INK; c.beginPath(); c.arc(77, -9, eye === 'scared' ? 3 : er * 0.45, 0, 7); c.fill();
+    if (detail) for (let k = 0; k < 4; k++) ink(c, [[66 + k * 6, -9 - er], [64 + k * 7, -9 - er - 7]], { close: false, lw: lw * 0.5, seed: sd + 40 + k });
+  }
+  if (mouth > 0) ink(c, ell(96, 4, 5 * mouth + 1, 7 * mouth + 1, 10), { fill: '#5a1a10', lw: lw * 0.8, seed: sd + 50 });
+  else ink(c, [[88, 6], [95, 8], [99, 4]], { close: false, lw: lw * 0.8, seed: sd + 50 });
+  if (barbels) { ink(c, [[96, 8], [110, 26], [102, 48], [108, 62]], { close: false, lw: lw * 0.9, seed: sd + 60 }); ink(c, [[92, 10], [96, 34], [86, 52]], { close: false, lw: lw * 0.8, seed: sd + 61 }); }
+  c.restore();
+}
+
+// --- stones, lotus, sun
+function stoneShape(x, y, r, seed) { const R = rng(seed), p = []; for (let i = 0; i < 9; i++) { const a = i / 9 * Math.PI * 2, rr = r * (0.82 + R() * 0.3); p.push([x + Math.cos(a) * rr * 1.12, y + Math.sin(a) * rr * 0.86]); } return p; }
+function stone(c, x, y, r, seed, o = {}) {
+  const { alpha = 1, fill = STONE, lw = 2.4 } = o; const p = stoneShape(x, y, r, seed);
+  ink(c, p, { fill, lw, seed: seed * 3, alpha });
+  c.save(); c.globalAlpha *= alpha; ink(c, p, { stroke: null, seed: seed * 3 }); c.clip();
+  for (let k = 0; k < 5; k++) { const o2 = r * 0.25 + k * r * 0.16; line(c, x + o2 - r * 0.4, y + r, x + o2 + r * 0.3, y - r * 0.1 + k * 4, { lw: 1.3, seed: seed * 7 + k }); }
+  c.fillStyle = INK; const R = rng(seed + 5); for (let k = 0; k < 4; k++) { c.beginPath(); c.arc(x - r * 0.45 + R() * r * 0.5, y - r * 0.4 + R() * r * 0.4, 1.8, 0, 7); c.fill(); }
+  c.restore();
+}
+function lotus(c, x, y, s, open, seed = 0) {
+  c.save(); c.translate(x, y); c.scale(s, s);
+  ink(c, ell(0, 18, 46, 20, 18), { fill: LEAF, lw: 2.2, seed: seed + 1 });
+  for (let k = -2; k <= 2; k++) line(c, 0, 18, k * 18, 30 - Math.abs(k) * 3, { lw: 1.2, seed: seed + 5 + k });
+  const n = 7, spread = lerp(0.18, 0.55, open), h = lerp(30, 38, open);
+  for (let i = 0; i < n; i++) {
+    const a = -Math.PI / 2 + (i - (n - 1) / 2) * spread;
+    const tip = [Math.cos(a) * h, Math.sin(a) * h + 8], l = [Math.cos(a - 0.5) * 11, Math.sin(a - 0.5) * 11 + 8], r = [Math.cos(a + 0.5) * 11, Math.sin(a + 0.5) * 11 + 8];
+    ink(c, [[0, 10], l, tip, r], { fill: i % 2 ? PINK : '#e88ea3', lw: 2, seed: seed + 20 + i });
+  }
+  c.restore();
+}
+function sun(c, x, y, r, t, col = TURM, seed = 0) {
+  c.save(); c.translate(x, y);
+  for (let i = 0; i < 16; i++) { const a = i / 16 * Math.PI * 2 + t * 0.4, a2 = a + 0.18, a3 = a - 0.18; ink(c, [[Math.cos(a3) * r * 1.05, Math.sin(a3) * r * 1.05], [Math.cos(a) * r * 1.55, Math.sin(a) * r * 1.55], [Math.cos(a2) * r * 1.05, Math.sin(a2) * r * 1.05]], { fill: i % 2 ? VERM : TURM, lw: 2, seed: seed + i }); }
+  ink(c, ell(0, 0, r, r, 24), { fill: col, lw: 2.6, seed: seed + 40 });
+  ink(c, ell(0, 0, r * 0.82, r * 0.82, 24), { lw: 1.4, seed: seed + 41 });
+  ink(c, [[-r * .45, -r * .12], [-r * .25, -r * .25], [-r * .08, -r * .12]], { close: false, lw: 2, seed: seed + 42 });
+  ink(c, [[r * .08, -r * .12], [r * .25, -r * .25], [r * .45, -r * .12]], { close: false, lw: 2, seed: seed + 43 });
+  c.fillStyle = INK; c.beginPath(); c.arc(-r * .26, -r * .14, r * .06, 0, 7); c.arc(r * .26, -r * .14, r * .06, 0, 7); c.fill();
+  ink(c, [[0, -r * .05], [-r * .07, r * .18], [r * .04, r * .2]], { close: false, lw: 1.8, seed: seed + 44 });
+  ink(c, [[-r * .25, r * .38], [0, r * .5], [r * .25, r * .38]], { fill: VERM, lw: 1.8, seed: seed + 45 });
+  c.restore();
+}
+function moon(c, x, y, r, seed = 0) {
+  c.save(); c.translate(x, y);
+  const p = []; for (let i = 0; i <= 16; i++) { const a = -Math.PI / 2 + i / 16 * Math.PI; p.push([Math.cos(a + Math.PI) * r * -1 * -1 * -1 + 0, 0]); }
+  const outer = [], inner = []; for (let i = 0; i <= 16; i++) { const a = Math.PI / 2 + i / 16 * Math.PI; outer.push([Math.cos(a) * r, Math.sin(a) * r]); inner.push([Math.cos(a) * r * 0.45 - r * 0.05, Math.sin(a) * r]); }
+  ink(c, outer.concat(inner.reverse()), { fill: '#f6edd3', lw: 2.4, seed });
+  c.fillStyle = INK; for (let k = 0; k < 5; k++) { c.beginPath(); c.arc(-r * 0.7 + k * 3, -r * 0.4 + k * r * 0.2, 2, 0, 7); c.fill(); }
+  c.restore();
+}
+
+// --- hatch (ink darkness)
+function hatch(c, alpha, x0, y0, x1, y1, gap = 9, seed = 0) {
+  if (alpha <= 0.01) return;
+  c.save(); c.beginPath(); c.rect(x0, y0, x1 - x0, y1 - y0); c.clip(); c.globalAlpha *= alpha; c.fillStyle = 'rgba(27,18,11,.55)'; c.fillRect(x0, y0, x1 - x0, y1 - y0);
+  const h = y1 - y0;
+  for (let x = x0 - h, i = 0; x < x1; x += gap, i++) line(c, x, y1, x + h, y0, { lw: 1.6, jit: 1.5, seed: seed + i });
+  for (let x = x0, i = 0; x < x1 + h; x += gap * 1.7, i++) line(c, x, y0, x - h, y1, { lw: 1.1, jit: 1.5, seed: seed + 900 + i });
+  c.restore();
+}
+
+// --- pond world
+const P0 = { x: 540, y: 560, rx: 320, ry: 255 };
+const RING = (() => { const R = rng(3), a = []; const n = 34; for (let i = 0; i < n; i++) { const t = i / n * Math.PI * 2; a.push({ t, r: 27 + R() * 10, seed: 100 + i }); } return a; })();
+const SCHOOL = (() => { const R = rng(5), a = []; const cols = [TURM, OCHRE, PINK, LEAF, '#d9692f', TURM]; for (let i = 0; i < 99; i++) a.push({ r: 0.22 + Math.sqrt(R()) * 0.66, a0: R() * 6.28, sp: (0.25 + R() * 0.25) * (R() < 0.85 ? 1 : -1), s: 0.15 + R() * 0.05, col: cols[i % cols.length], seed: i }); return a; })();
+const CRACKS = (() => { const R = rng(21), a = []; for (let i = 0; i < 40; i++) { const t = R() * 6.28, u = 0.4 + R() * 0.55; let x = P0.x + Math.cos(t) * P0.rx * u, y = P0.y + Math.sin(t) * P0.ry * u; const p = [[x, y]]; for (let k = 0; k < 4; k++) { x += R() * 50 - 25; y += R() * 50 - 25; p.push([x, y]); } a.push(p); } return a; })();
+
+function pondWater(c, sc = 1, col = WATER) {
+  ink(c, ell(P0.x, P0.y, P0.rx * sc, P0.ry * sc, 48, 0.02), { fill: col, lw: 3, seed: 500 });
+  for (let k = 1; k <= 6; k++) ink(c, ell(P0.x, P0.y, P0.rx * sc * k / 7, P0.ry * sc * k / 7, 40, 0.03, k + BOIL * 0.0), { lw: 1.3, stroke: INDI, seed: 510 + k, alpha: 0.65 });
+}
+function ringStones(c, o = {}) {
+  const { gap = null, appear = -100, t = 0, alpha = 1 } = o;
+  RING.forEach((s, i) => {
+    if (gap !== null && Math.abs(Math.atan2(Math.sin(s.t - gap), Math.cos(s.t - gap))) < 0.14) return;
+    const ta = t - (appear + i * 0.06); if (ta < 0) return; const k = E(ta, 0, 0.35);
+    const x = P0.x + Math.cos(s.t) * (P0.rx + 34), y = P0.y + Math.sin(s.t) * (P0.ry + 34) - (1 - k) * 40;
+    stone(c, x, y, s.r * lerp(1.5, 1, k), s.seed, { alpha: alpha * k });
+  });
+}
+function school(c, t, o = {}) {
+  const { sc = 1, alpha = 1, speed = 1, jitter = 0 } = o;
+  SCHOOL.forEach((f, i) => {
+    const a = f.a0 + t * f.sp * speed, r = f.r * sc;
+    const x = P0.x + Math.cos(a) * P0.rx * r + (jitter ? Math.sin(t * 37 + i) * jitter : 0), y = P0.y + Math.sin(a) * P0.ry * r;
+    const rot = a + (f.sp > 0 ? Math.PI / 2 : -Math.PI / 2);
+    fish(c, { x, y, rot, s: f.s, col: f.col, band: INK === f.col ? TURM : (i % 3 ? TURM : VERM), detail: 0, lw: 1.5, seed: f.seed, alpha, wig: Math.sin(t * 8 + i) * 0.25 });
+  });
+}
+
+// --- caption ribbon
+function ribbon(c, parts, o = {}) {
+  const { y = 960, size = 52, font = 'Amita', weight = 700, p = 1, alpha = 1 } = o;
+  if (alpha <= 0.01) return;
+  const f = (font === 'Amita' ? '700 ' : '') + size + 'px "' + font + '"';
+  c.save(); c.font = f; c.globalAlpha *= alpha;
+  const ws = parts.map((s) => c.measureText(s.t).width), tw = ws.reduce((a, b) => a + b, 0);
+  const w = tw + 90, h = size * 1.55, x0 = W / 2 - w / 2, y0 = y - h / 2;
+  const shp = [[x0, y0], [x0 + w, y0], [x0 + w - 22, y0 + h / 2], [x0 + w, y0 + h], [x0, y0 + h], [x0 + 22, y0 + h / 2]];
+  const k = E(p, 0, 0.25);
+  c.save(); c.translate(W / 2, y); c.scale(lerp(0.6, 1, k), 1); c.translate(-W / 2, -y); c.globalAlpha *= k;
+  ink(c, shp, { fill: '#f6ead0', lw: 2.6, seed: 700, jit: 0.8 });
+  ink(c, shp.map(([a, b]) => [W / 2 + (a - W / 2) * 0.975, y + (b - y) * 0.82]), { lw: 1.2, seed: 701, jit: 0.8 });
+  c.restore();
+  // write-on reveal
+  const rp = E(p, 0.12, 0.7);
+  c.beginPath(); c.rect(W / 2 - tw / 2 - 4, y0, (tw + 8) * rp, h); c.clip();
+  let x = W / 2 - tw / 2; c.textBaseline = 'middle';
+  parts.forEach((s, i) => { c.fillStyle = s.c || INK; c.fillText(s.t, x, y + size * 0.08); x += ws[i]; });
+  c.restore();
+}
+const cap = (t, a, b, parts, o = {}) => { if (t < a || t > b + 0.01) return null; return () => 0; };
+function captionAt(c, t, a, b, parts, o = {}) { if (t < a) return; const fade = 1 - E(t, b - 0.35, b); ribbon(c, parts, { ...o, p: (t - a) / 1.6, alpha: fade }); }
+
+// --- border (Madhubani frame)
+function border(c) {
+  const o = 18, i = 46;
+  c.save();
+  c.fillStyle = '#2a1a0e'; c.beginPath(); c.rect(0, 0, W, H); c.rect(o, o, W - 2 * o, H - 2 * o); c.fill('evenodd');
+  c.fillStyle = PAPER; c.beginPath(); c.rect(o, o, W - 2 * o, H - 2 * o); c.rect(i, i, W - 2 * i, H - 2 * i); c.fill('evenodd');
+  const cols = [VERM, TURM, LEAF, INDI]; let n = 0;
+  const side = (x0, y0, dx, dy, nx, ny, len) => {
+    const cnt = Math.round(len / 30);
+    for (let k = 0; k < cnt; k++) {
+      const ax = x0 + dx * k * len / cnt, ay = y0 + dy * k * len / cnt, bx = ax + dx * len / cnt, by = ay + dy * len / cnt;
+      ink(c, [[ax, ay], [bx, by], [(ax + bx) / 2 + nx * 24, (ay + by) / 2 + ny * 24]], { fill: cols[n % 4], lw: 1.6, seed: 2000 + n, jit: 0.7 }); n++;
+    }
+  };
+  side(o + 2, o + 2, 1, 0, 0, 1, W - 2 * o - 4); side(W - o - 2, o + 2, 0, 1, -1, 0, H - 2 * o - 4);
+  side(W - o - 2, H - o - 2, -1, 0, 0, -1, W - 2 * o - 4); side(o + 2, H - o - 2, 0, -1, 1, 0, H - 2 * o - 4);
+  [[i, 2.6, 2900], [o, 2.2, 2950], [i - 6, 1.1, 2990]].forEach(([q, lw, sd]) => { line(c, q, q, W - q, q, { lw, seed: sd, jit: 0.6 }); line(c, W - q, q, W - q, H - q, { lw, seed: sd + 9, jit: 0.6 }); line(c, W - q, H - q, q, H - q, { lw, seed: sd + 18, jit: 0.6 }); line(c, q, H - q, q, q, { lw, seed: sd + 27, jit: 0.6 }); });
+  c.restore();
+}
+
+// =================== SCENES ===================
+const heroAt = (t, cx, cy, r) => ({ x: cx + Math.cos(t) * r, y: cy + Math.sin(t) * r * 0.6 });
+const SC = [];
+const scene = (d, fn, cue) => SC.push({ d, fn, cue });
+
+// 1 — the pond, the stones, the rule
+scene(7.5, (c, t) => {
+  const z = lerp(1, 1.05, t / 7.5); c.translate(W / 2, H / 2); c.scale(z, z); c.translate(-W / 2, -H / 2 - 10);
+  c.globalAlpha = E(t, 0, 0.8); pondWater(c); c.globalAlpha = 1;
+  school(c, t, { alpha: E(t, 0.6, 1.8) });
+  fish(c, { x: P0.x + 210 + Math.sin(t * 1.3) * 20, y: P0.y - 60 + Math.cos(t * 1.3) * 14, rot: -0.3 + Math.cos(t * 1.3) * 0.3, s: 0.44, seed: 1, alpha: E(t, 1, 2), wig: Math.sin(t * 9) * 0.3 });
+  ringStones(c, { appear: 1.6, t });
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  captionAt(c, t, 4.4, 7.5, [{ t: 'पत्थरों के पार ' }, { t: 'मत', c: VERM }, { t: ' जाओ।' }], { font: 'Rozha One', size: 60 });
+});
+
+// 2 — "what's beyond?" / "only darkness"
+scene(8, (c, t) => {
+  const z = lerp(1, 2.0, E(t, 0, 2.6)), fx = lerp(540, 820, E(t, 0, 2.6)), fy = lerp(560, 560, 1);
+  c.translate(W / 2, H / 2); c.scale(z, z); c.translate(-fx, -fy);
+  // darkness beyond the ring
+  const da = E(t, 3.4, 5.6);
+  c.save(); c.beginPath(); c.rect(-200, -200, 1600, 1600); c.ellipse(P0.x, P0.y, P0.rx + 34, P0.ry + 34, 0, 0, Math.PI * 2, true); c.clip('evenodd');
+  hatch(c, da, 0, 0, 1300, 1150, 9, 300); c.restore();
+  pondWater(c); school(c, t + 7.5, { alpha: 1 });
+  const turn = E(t, 5.6, 6.3);
+  const hx = lerp(lerp(750, 842, E(t, 0.3, 2.6)), 700, E(t, 6.0, 8)), hy = 545;
+  fish(c, { x: hx, y: hy, rot: lerp(0, Math.PI, turn), s: 0.34, seed: 1, eye: turn > 0.2 ? 'scared' : 'open', wig: Math.sin(t * 10) * 0.3 });
+  fish(c, { x: lerp(640, 745, E(t, 2.4, 3.6)), y: 625, rot: -0.15, s: 0.62, col: '#6e7a45', band: OCHRE, seed: 9, alpha: E(t, 2.4, 3.2), barbels: true, mouth: t > 4.2 && t < 5.6 ? 0.5 + 0.5 * Math.sin(t * 14) : 0, wig: Math.sin(t * 3) * 0.1 });
+  ringStones(c);
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  captionAt(c, t, 1.0, 3.9, [{ t: 'पत्थरों के पार क्या है?' }], { size: 50 });
+  captionAt(c, t, 4.2, 8, [{ t: 'सिर्फ ' }, { t: 'अँधेरा', c: VERM }, { t: '।' }], { font: 'Rozha One', size: 64 });
+});
+
+// 3 — days, years: same water, same stones, same fear
+scene(9, (c, t) => {
+  const cyc = 3, ph = (t / cyc) % 1, day = ph < 0.62;
+  const u = day ? ph / 0.62 : (ph - 0.62) / 0.38;
+  const bx = lerp(150, 930, u), by = 150 - Math.sin(u * Math.PI) * 60;
+  if (day) sun(c, bx, by, 46, t, TURM, 70); else moon(c, bx, by, 40, 71);
+  pondWater(c);
+  [[P0.x - 250, P0.y - 120], [P0.x + 230, P0.y + 150], [P0.x - 180, P0.y + 170], [P0.x + 260, P0.y - 140]].forEach(([x, y], i) => lotus(c, x, y, 0.75, day ? Math.sin(u * Math.PI) : 0, 80 + i * 30));
+  school(c, t * 3, {});
+  const fade = E(t, 0.5, 8.5);
+  const a = t * 2.2; fish(c, { x: P0.x + 180 + Math.cos(a) * 40, y: P0.y - 20 + Math.sin(a) * 28, rot: a + Math.PI / 2, s: lerp(0.3, 0.42, fade), col: mixHex(VERM, '#8f857a', fade), band: mixHex(TURM, '#b9ae98', fade), seed: 1, wig: Math.sin(t * 9) * 0.3 });
+  ringStones(c);
+  if (!day) { c.save(); c.globalCompositeOperation = 'multiply'; c.fillStyle = 'rgba(70,90,150,' + (0.35 * Math.sin(u * Math.PI) + 0.12) + ')'; c.fillRect(0, 0, W, H); c.restore(); }
+  captionAt(c, t, 1.6, 9, [{ t: 'वही पानी। वही पत्थर। ' }, { t: 'वही डर।', c: VERM }], { size: 50 });
+}, null);
+
+// 4 — the drought
+scene(7, (c, t) => {
+  const w = 1 - 0.65 * E(t, 0.4, 5.2);
+  ink(c, ell(P0.x, P0.y, P0.rx, P0.ry, 48, 0.02), { fill: '#d9b47a', lw: 3, seed: 500 });
+  CRACKS.forEach((p, i) => { const k = E(t, 0.8 + i * 0.05, 2.6 + i * 0.05); if (k > 0) ink(c, p.slice(0, Math.max(2, Math.ceil(p.length * k))), { close: false, lw: 2, seed: 800 + i, stroke: '#5a3a1a' }); });
+  pondWater(c, w, '#b9c9a4');
+  school(c, t * 1.6, { sc: w * 0.95, jitter: 2 * E(t, 3, 6) });
+  fish(c, { x: P0.x + P0.rx * w * 0.7, y: P0.y, rot: Math.sin(t * 2) * 0.4, s: 0.36, col: mixHex(VERM, '#8f857a', 0.8 - 0.4 * E(t, 4, 7)), band: TURM, seed: 1, wig: Math.sin(t * 12) * 0.3 });
+  ringStones(c);
+  const sr = lerp(48, 105, E(t, 0, 6));
+  sun(c, 880, 170, sr, t * 2, mixHex(TURM, '#e0581f', E(t, 1, 6)), 70);
+  c.save(); c.globalCompositeOperation = 'multiply'; c.fillStyle = 'rgba(230,150,60,' + 0.28 * E(t, 0.5, 6) + ')'; c.fillRect(0, 0, W, H); c.restore();
+  captionAt(c, t, 3.4, 7, [{ t: 'फिर ' }, { t: 'गर्मी', c: VERM }, { t: ' आई।' }], { size: 54 });
+});
+
+// 5 — the leap; the darkness was never there; a river
+scene(8.5, (c, t) => {
+  const hxPath = (t) => t < 1 ? lerp(P0.x + P0.rx * 0.35 * 0.7, 842, E(t, 0, 1)) : t < 1.9 ? lerp(842, 1010, (t - 1) / 0.9) : lerp(1010, 2050, E(t, 1.9, 6.6));
+  const hx = hxPath(t), camx = clamp(hx, 540, 2050) + 0 * t;
+  c.translate(W / 2 - camx, 0);
+  // river at far right
+  const rx0 = 1840, rx1 = 2280;
+  { const Lp = [], Rp = []; for (let y = -40; y <= 1120; y += 40) { Lp.push([rx0 + Math.sin(y / 170) * 14, y]); Rp.push([rx1 + Math.sin(y / 150 + 1) * 14, y]); } ink(c, Lp.concat(Rp.reverse()), { fill: '#a9c8d4', lw: 3, seed: 950 }); }
+  for (let k = 0; k < 26; k++) { const y = ((k * 42 + t * 90) % 1120) - 20; const p = []; for (let x = rx0 + 18; x <= rx1 - 18; x += 40) p.push([x, y + Math.sin(x / 40 + k) * 7]); ink(c, p, { close: false, lw: 1.5, stroke: INDI, seed: 960 + k, alpha: 0.8 }); }
+  [[1900, 200], [2230, 420], [1920, 820], [2210, 900]].forEach(([x, y], i) => lotus(c, x, y, 0.8, 1, 990 + i * 20));
+  for (let k = 0; k < 7; k++) fish(c, { x: rx0 + 60 + (k * 67) % 380, y: ((k * 160 + t * 120) % 1150) - 40, rot: Math.PI / 2, s: 0.22, col: [TURM, PINK, LEAF, OCHRE][k % 4], detail: 0, lw: 1.5, seed: 30 + k, wig: Math.sin(t * 8 + k) * 0.3 });
+  // trail
+  ink(c, [[842, 560], [1000, 565], [1300, 555], [1600, 570], [1850, 560]], { close: false, lw: 10, stroke: '#9fbcc3', seed: 970, alpha: E(t, 1.7, 2.3) });
+  // darkness, dissolving as she advances
+  const dk = 1 - E(hx, 1080, 1750);
+  hatch(c, dk, 935, 0, 1840, 1080, 9, 300);
+  // dry pond
+  ink(c, ell(P0.x, P0.y, P0.rx, P0.ry, 48, 0.02), { fill: '#d9b47a', lw: 3, seed: 500 });
+  CRACKS.forEach((p, i) => ink(c, p, { close: false, lw: 2, seed: 800 + i, stroke: '#5a3a1a' }));
+  pondWater(c, 0.35, '#b9c9a4'); school(c, 8 + t * 1.6, { sc: 0.33, jitter: 2 });
+  ringStones(c, { gap: 0 });
+  const jump = t > 1 && t < 1.9 ? Math.sin((t - 1) / 0.9 * Math.PI) : 0;
+  if (jump > 0) ink(c, ell(hx, 600, 30 * (1 - jump * 0.4), 8, 12), { fill: 'rgba(27,18,11,.25)', stroke: null, seed: 5 });
+  const bright = E(hx, 1200, 1900);
+  fish(c, { x: hx, y: 560 - jump * 90 + (t > 6.6 ? Math.sin(t * 2) * 10 : 0), rot: t > 6.6 ? -0.25 : -jump * 0.5 + Math.sin(t * 4) * 0.06, s: 0.38 * (1 + jump * 0.5), col: mixHex('#a58d7e', VERM, bright), band: TURM, seed: 1, wig: Math.sin(t * 12) * 0.3 });
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  if (t > 1.88 && t < 2.4) { c.save(); c.globalAlpha = 1 - (t - 1.88) / 0.52; ink(c, ell(W / 2 + (hx - camx) + 10, 575, 40 + (t - 1.88) * 120, 12 + (t - 1.88) * 40, 20), { lw: 2, stroke: INDI, seed: 6 }); c.restore(); }
+  captionAt(c, t, 6.4, 8.5, [{ t: 'एक ' }, { t: 'नदी', c: INDI }, { t: '।' }], { font: 'Rozha One', size: 72 });
+}, 'leap');
+
+// 6 — the river becomes the sea; thousands of fish
+const SEA = (() => { const R = rng(61), a = []; const cols = [TURM, PINK, LEAF, OCHRE, '#d9692f', SKY]; for (let i = 0; i < 380; i++) a.push({ x: R() * 1300 - 110, y: 1900 + R() * 1000, d: R() < 0.5 ? 1 : -1, sp: 20 + R() * 40, s: 0.12 + R() * 0.1, col: cols[i % cols.length], seed: i }); return a; })();
+scene(8, (c, t) => {
+  const cy = lerp(500, 2350, E(t, 0, 6.5));
+  c.translate(0, H / 2 - cy);
+  const cx = (y) => 540 + 140 * Math.sin(y / 320), hw = (y) => y < 1500 ? 120 : y < 1950 ? 120 + Math.pow((y - 1500) / 450, 2) * 500 : 700;
+  // banks + grass
+  const R = rng(5);
+  for (let k = 0; k < 90; k++) { const y = R() * 2000, s = R() < 0.5 ? -1 : 1, x = cx(y) + s * (hw(y) + 40 + R() * 300); for (let g = -1; g <= 1; g++) ink(c, [[x, y], [x + g * 9, y - 26]], { close: false, lw: 1.6, stroke: LEAF, seed: 1200 + k * 3 + g }); }
+  const L = [], Rr = []; for (let y = -100; y <= 1980; y += 40) { L.push([cx(y) - hw(y), y]); Rr.push([cx(y) + hw(y), y]); }
+  ink(c, L.concat([[-200, 1980], [-200, 3300], [1300, 3300], [1300, 1980]]).concat(Rr.reverse()), { fill: '#a9c8d4', lw: 3, seed: 1300 });
+  for (let y = -80; y < 3200; y += 38) { const yy = y + (t * 60) % 38; const x0 = yy > 1950 ? -60 : cx(yy) - hw(yy) + 14, x1 = yy > 1950 ? 1140 : cx(yy) + hw(yy) - 14; const p = []; for (let x = x0; x <= x1; x += 36) p.push([x, yy + Math.sin(x / 36 + y) * 6]); if (p.length > 1) ink(c, p, { close: false, lw: 1.4, stroke: INDI, seed: 1400 + y, alpha: 0.75 }); }
+  [[cx(300) - 70, 300], [cx(800) + 60, 800], [cx(1300) - 50, 1300]].forEach(([x, y], i) => lotus(c, x, y, 0.7, 1, 1500 + i * 20));
+  SEA.forEach((f) => { const x = ((f.x + f.d * f.sp * t) % 1400 + 1400) % 1400 - 160; if (Math.abs(f.y - cy) < 620) fish(c, { x, y: f.y, rot: f.d > 0 ? 0 : Math.PI, s: f.s, col: f.col, detail: 0, lw: 1.4, seed: f.seed, alpha: E(t, 3, 5), wig: Math.sin(t * 9 + f.seed) * 0.3 }); });
+  const hy = cy - 120 + Math.sin(t * 2) * 10; fish(c, { x: cx(hy) + 10, y: hy, rot: Math.PI / 2 + 0.3 * Math.cos(hy / 320), s: 0.4, seed: 1, wig: Math.sin(t * 12) * 0.3 });
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  captionAt(c, t, 4.6, 8, [{ t: 'हजारों', c: VERM }, { t: ' मछलियाँ — हर एक ने तालाब छोड़ा था।' }], { size: 44 });
+});
+
+// 7 — the old one of the sea laughs
+scene(8.5, (c, t) => {
+  for (let y = 80; y < 1040; y += 40) { const yy = y + (t * 20) % 40; const p = []; for (let x = 40; x <= 1040; x += 40) p.push([x, yy + Math.sin(x / 40 + y) * 6]); ink(c, p, { close: false, lw: 1.2, stroke: INDI, seed: 1600 + y, alpha: 0.35 }); }
+  SEA.slice(0, 70).forEach((f, i) => { const x = ((f.x + f.d * f.sp * t * 0.6) % 1400 + 1400) % 1400 - 160; fish(c, { x, y: 90 + (i * 131) % 860, rot: f.d > 0 ? 0 : Math.PI, s: 0.1, col: f.col, detail: 0, lw: 1.2, seed: f.seed, alpha: 0.45 }); });
+  const laugh = t > 3.6, bob = laugh ? Math.sin(t * 16) * 5 : Math.sin(t * 2) * 6;
+  fish(c, { x: 410, y: 540 + bob, rot: -0.05, s: 2.0, col: INDI, band: SKY, seed: 77, eye: laugh ? 'closed' : 'open', mouth: laugh ? 0.7 + 0.3 * Math.sin(t * 16) : 0, barbels: true, wig: Math.sin(t * 2.4) * 0.12, lw: 3 });
+  if (laugh) for (let k = 0; k < 3; k++) { const a = E(t, 3.6 + k * 0.25, 4 + k * 0.25); ink(c, [[640 + k * 26, 470 - k * 30], [664 + k * 30, 452 - k * 36]], { close: false, lw: 3, seed: 1700 + k, alpha: a }); }
+  fish(c, { x: 850 + Math.sin(t * 1.5) * 8, y: 360, rot: Math.PI, s: 0.42, seed: 1, wig: Math.sin(t * 10) * 0.3 });
+  captionAt(c, t, 0.6, 3.6, [{ t: 'कोई वापस गया?' }], { size: 52 });
+  captionAt(c, t, 3.9, 8.5, [{ t: 'क्यों जाएगा? यहाँ पानी ' }, { t: 'कभी नहीं', c: VERM }, { t: ' सूखता।' }], { size: 46 });
+});
+
+// 8 — the pond keeps telling the old story
+scene(7.5, (c, t) => {
+  c.save(); c.beginPath(); c.rect(0, 0, W, H); c.ellipse(P0.x, P0.y, P0.rx + 34, P0.ry + 34, 0, 0, Math.PI * 2, true); c.clip('evenodd'); hatch(c, 0.9, 0, 0, W, H, 10, 300); c.restore();
+  pondWater(c, 1, '#b8c2a8');
+  const cloud = E(t, 0.6, 4);
+  ink(c, ell(P0.x + 20, P0.y - 120, 150 * cloud, 70 * cloud, 22, 0.12, t), { fill: 'rgba(27,18,11,.85)', lw: 2.4, seed: 1800, alpha: cloud });
+  if (cloud > 0.5) { c.save(); c.globalAlpha = E(t, 2, 3.5); c.strokeStyle = PAPER; c.lineWidth = 2; for (let k = 0; k < 3; k++) { c.beginPath(); c.arc(P0.x - 30 + k * 50, P0.y - 125, 10 + k * 4, 0.2, 5.6); c.stroke(); } c.restore(); }
+  fish(c, { x: P0.x - 60, y: P0.y + 10, rot: 0, s: 0.62, col: '#6e7a45', band: OCHRE, seed: 9, barbels: true, mouth: 0.5 + 0.5 * Math.sin(t * 9), wig: Math.sin(t * 3) * 0.1 });
+  for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2 + 0.3, x = P0.x - 40 + Math.cos(a) * 225 + Math.sin(t * 40 + k) * 1.6, y = P0.y + 20 + Math.sin(a) * 160; fish(c, { x, y, rot: Math.atan2(P0.y - y, P0.x - 40 - x), s: 0.24, col: [TURM, OCHRE, PINK, '#d9692f'][k % 4], band: TURM, eye: 'scared', seed: 200 + k }); }
+  ringStones(c);
+  c.save(); c.globalCompositeOperation = 'multiply'; c.fillStyle = 'rgba(150,110,60,.25)'; c.fillRect(0, 0, W, H); c.restore();
+  captionAt(c, t, 2.2, 7.5, [{ t: 'और तालाब ' }, { t: 'वही कहानी', c: VERM }, { t: ' सुनाता रहा।' }], { size: 48 });
+});
+
+// 9 — the stones were never real: 10th / 12th / Graduation / फिर?
+const ST = [[205, 470, 88, '10th'], [430, 470, 88, '12th'], [690, 470, 112, 'Graduation'], [915, 470, 74, 'फिर?']];
+const FR = ST.map((s, i) => { const R = rng(40 + i), a = []; for (let k = 0; k < 11; k++) { const ang = R() * 6.28, d = R() * s[2] * 0.6; a.push({ x: s[0] + Math.cos(ang) * d, y: s[1] + Math.sin(ang) * d * 0.8, vx: Math.cos(ang) * (80 + R() * 160), vy: Math.sin(ang) * (60 + R() * 120) - 120, r: s[2] * (0.18 + R() * 0.14), seed: 3000 + i * 20 + k }); } return a; });
+scene(8.5, (c, t) => {
+  for (let y = 300; y < 680; y += 38) { const p = []; for (let x = 70; x <= 1010; x += 40) p.push([x, y + Math.sin(x / 40 + y + t) * 6]); ink(c, p, { close: false, lw: 1.2, stroke: INDI, seed: 3500 + y, alpha: 0.3 }); }
+  ST.forEach(([x, y, r, l], i) => {
+    const ap = E(t, 0.3 + i * 0.45, 0.8 + i * 0.45), br = 3.4 + i * 0.4, bt = t - br;
+    if (bt < 0) {
+      stone(c, x, y - (1 - ap) * 60, r, 600 + i, { alpha: ap, lw: 3 });
+      if (bt > -0.4) { c.save(); c.globalAlpha = ap; for (let k = 0; k < 3; k++) ink(c, [[x - r * 0.2 + k * 14, y - r * 0.6], [x - r * 0.1 + k * 10, y], [x + k * 16, y + r * 0.5]], { close: false, lw: 1.8, seed: 3600 + i * 5 + k }); c.restore(); }
+      c.save(); c.globalAlpha = ap; c.font = (l.length > 6 ? 36 : 50) + 'px "Rozha One"'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = INK; c.fillText(l, x, y + 4); c.restore();
+    } else {
+      FR[i].forEach((f) => { const tt = bt; stone(c, f.x + f.vx * tt, f.y + f.vy * tt + 260 * tt * tt, f.r * (1 - E(tt, 0.4, 1.4) * 0.6), f.seed, { alpha: 1 - E(tt, 0.3, 1.3) }); });
+      c.save(); c.globalAlpha = 1 - E(bt, 0, 0.5); c.font = (l.length > 6 ? 30 : 42) + 'px "Rozha One"'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = INK; c.fillText(l, x, y + 4 - bt * 60); c.restore();
+    }
+  });
+  const hx = lerp(-120, 1220, E(t, 4.4, 8.3));
+  fish(c, { x: hx, y: 480 + Math.sin(t * 3) * 14, rot: Math.cos(t * 3) * 0.15, s: 0.55, seed: 1, wig: Math.sin(t * 12) * 0.3 });
+  captionAt(c, t, 5.0, 8.5, [{ t: 'वो पत्थर ' }, { t: 'असली नहीं', c: VERM }, { t: ' होते।' }], { font: 'Rozha One', size: 58, y: 880 });
+}, 'crumble');
+
+// 10 — at 16 she left; now people her age swim with her
+scene(8, (c, t) => {
+  for (let y = 90; y < 1040; y += 40) { const p = []; const off = (t * 140) % 40; for (let x = 40 - off; x <= 1080; x += 40) p.push([x, y + Math.sin((x + t * 140) / 40 + y) * 6]); ink(c, p, { close: false, lw: 1.3, stroke: INDI, seed: 3800 + y, alpha: 0.45 }); }
+  const mp = E(t, 0.3, 1.2);
+  c.save(); c.translate(840, 230); c.scale(mp, mp);
+  for (let k = 0; k < 20; k++) { const a = k / 20 * Math.PI * 2 + t * 0.3; ink(c, [[Math.cos(a - 0.1) * 92, Math.sin(a - 0.1) * 92], [Math.cos(a) * 122, Math.sin(a) * 122], [Math.cos(a + 0.1) * 92, Math.sin(a + 0.1) * 92]], { fill: k % 2 ? VERM : TURM, lw: 1.8, seed: 3900 + k }); }
+  ink(c, ell(0, 0, 92, 92, 26), { fill: '#f6ead0', lw: 3, seed: 3950 }); ink(c, ell(0, 0, 78, 78, 26), { lw: 1.4, seed: 3951 });
+  c.font = '92px "Rozha One"'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = VERM; c.fillText('16', 0, 8);
+  c.restore();
+  const hx = 520 + Math.sin(t * 1.2) * 30, hy = 560 + Math.cos(t * 1.6) * 16;
+  const cols = [TURM, PINK, LEAF, SKY, OCHRE, '#d9692f'];
+  for (let k = 1; k <= 6; k++) { const side = k % 2 ? -1 : 1, row = Math.ceil(k / 2); const j = E(t, 1.2 + k * 0.45, 2.2 + k * 0.45); const tx = hx - row * 140, ty = hy + side * row * 95; fish(c, { x: lerp(-200, tx, j), y: ty + Math.sin(t * 2 + k) * 10, rot: 0, s: 0.44, col: cols[k - 1], band: k % 2 ? VERM : TURM, seed: 400 + k, alpha: j, wig: Math.sin(t * 11 + k) * 0.3 }); }
+  fish(c, { x: hx, y: hy, rot: 0, s: 0.52, seed: 1, wig: Math.sin(t * 12) * 0.3 });
+  captionAt(c, t, 1.6, 8, [{ t: '16 की उम्र में मैंने ' }, { t: 'तालाब', c: VERM }, { t: ' छोड़ा।' }], { size: 50 });
+});
+
+// 11 — comment RIVER
+scene(9, (c, t) => {
+  c.save(); c.translate(540, 210); c.scale(0.36, 0.36); c.translate(-P0.x, -P0.y);
+  pondWater(c); school(c, t, {}); ringStones(c, { gap: Math.PI / 2 });
+  c.restore();
+  const path = []; for (let y = 320; y <= 560; y += 20) path.push([540 + Math.sin((y - 320) / 60) * 50, y]);
+  const rp = E(t, 0.4, 2.2);
+  ink(c, path.slice(0, Math.max(2, Math.round(path.length * rp))), { close: false, lw: 22, stroke: '#a9c8d4', seed: 4000 });
+  ink(c, path.slice(0, Math.max(2, Math.round(path.length * rp))), { close: false, lw: 2, stroke: INDI, seed: 4001 });
+  const hp = E(t, 0.8, 2.6); const hi = Math.min(path.length - 1, Math.round(hp * (path.length - 1)));
+  if (t < 3.2) fish(c, { x: path[hi][0], y: path[hi][1], rot: Math.PI / 2, s: 0.22, seed: 1, alpha: 1 - E(t, 2.7, 3.2), wig: Math.sin(t * 12) * 0.3 });
+  // Comment करो
+  c.save(); c.globalAlpha = E(t, 2.2, 3); c.font = '700 58px "Amita"'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = INK; c.fillText('Comment करो', 540, 640); c.restore();
+  // RIVER with madhubani wave fill, written on
+  const wp = E(t, 2.8, 4.4);
+  const tc = TXT.getContext('2d'); tc.setTransform(1, 0, 0, 1, 0, 0); tc.clearRect(0, 0, W, H);
+  tc.font = '230px "Rozha One"'; tc.textAlign = 'center'; tc.textBaseline = 'alphabetic'; tc.fillStyle = INDI; tc.fillText('RIVER', 540, 905);
+  tc.globalCompositeOperation = 'source-atop';
+  for (let y = 700; y < 920; y += 22) { const p = []; for (let x = 180; x <= 900; x += 30) p.push([x, y + Math.sin(x / 30 + y + t * 3) * 5]); ink(tc, p, { close: false, lw: 2.4, stroke: SKY, seed: 4100 + y }); }
+  tc.globalCompositeOperation = 'source-over'; tc.lineWidth = 3; tc.strokeStyle = INK; tc.strokeText('RIVER', 540, 905);
+  c.save(); c.beginPath(); c.rect(0, 680, 220 + 640 * wp, 260); c.clip(); c.drawImage(TXT, 0, 0); c.restore();
+  if (t > 4.4) fish(c, { x: lerp(160, 960, E(t, 4.4, 7.5)), y: 950, rot: 0, s: 0.28, seed: 1, wig: Math.sin(t * 12) * 0.3 });
+  c.save(); c.globalAlpha = 0.7 * E(t, 5.2, 6.2); c.font = '700 30px "Amita"'; c.textAlign = 'center'; c.fillStyle = INK; c.fillText('या फिर उसी तालाब में रहो, जहाँ हमेशा से हो।', 540, 1005); c.restore();
+}, 'river');
+
+// =================== driver ===================
+const STARTS = []; { let a = 0; SC.forEach((s) => { STARTS.push(a); a += s.d; }); }
+const TOTAL = STARTS[STARTS.length - 1] + SC[SC.length - 1].d;
+const XF = 0.7; // crossfade seconds
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const offA = document.createElement('canvas'), offB = document.createElement('canvas'); offA.width = offB.width = W; offA.height = offB.height = H;
+function renderScene(c, i, t) { c.setTransform(1, 0, 0, 1, 0, 0); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over'; c.drawImage(paper, 0, 0); c.save(); SC[i].fn(c, Math.max(0, t)); c.restore(); }
+window.drawFrame = (f) => {
+  BOIL = Math.floor(f / 3) % 4;
+  const T = f / FPS; let i = 0; while (i < SC.length - 1 && T >= STARTS[i + 1]) i++;
+  const t = T - STARTS[i], rem = SC[i].d - t;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (i < SC.length - 1 && rem < XF) {
+    renderScene(offA.getContext('2d'), i, t); renderScene(offB.getContext('2d'), i + 1, 0);
+    ctx.globalAlpha = 1; ctx.drawImage(offA, 0, 0); ctx.globalAlpha = ease(1 - rem / XF); ctx.drawImage(offB, 0, 0); ctx.globalAlpha = 1;
+  } else renderScene(ctx, i, t);
+  if (T < 0.6) { ctx.fillStyle = 'rgba(27,18,11,' + (1 - T / 0.6) + ')'; ctx.fillRect(0, 0, W, H); }
+  if (T > TOTAL - 0.8) { ctx.fillStyle = 'rgba(27,18,11,' + clamp((T - (TOTAL - 0.8)) / 0.8) + ')'; ctx.fillRect(0, 0, W, H); }
+  border(ctx);
+};
+window.FILM = { TOTAL, FPS, STARTS, CUES: SC.map((s, i) => ({ start: STARTS[i], d: s.d, cue: s.cue })) };
+window.READY = (async () => { await Promise.all(['700 50px Amita', '50px "Rozha One"'].map((f) => document.fonts.load(f, 'पत्थर RIVER 16'))); window.drawFrame(0); return true; })();
+</script></body></html>
