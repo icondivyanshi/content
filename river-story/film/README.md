@@ -1,6 +1,6 @@
 # पत्थरों के पार — the film (1:1, 89 s)
 
-`river-story.mp4`: 1080×1080, 30 fps, with sound. Hand-drawn Madhubani folk-art style: ink lines that "boil" like frame-by-frame animation, handmade-paper texture, earthy pigments (vermilion, turmeric, indigo, leaf green), and the Madhubani triangle border. Captions use Amita (calligraphic) and Rozha One (display), with very little text.
+`river-story.mp4`: 1080×1080, 30 fps, with sound. Hand-drawn Madhubani folk-art style: ink lines that "boil" like frame-by-frame animation, handmade-paper texture, earthy pigments (vermilion, turmeric, indigo, leaf green), and the Madhubani triangle border. By default there is no border and no captions, and every scene fills the square frame (add your own voice-over or text in the edit). To get the captioned version with the border back, open `film.html?text&border`.
 
 The soundtrack is synthesized from scratch in `audio.js`: a tanpura drone (Pa–Sa–Sa–Sa), water that dries up in the drought and swells at the river and sea, a temple bell at "एक नदी", at 16 and at RIVER, stone cracks when 10th, 12th and Graduation crumble, and a plop when she leaps.
 
@@ -19,3 +19,6 @@ The soundtrack is synthesized from scratch in `audio.js`: a tanpura drone (Pa–
 | 1:20 | Comment करो **RIVER** |
 
 To rebuild: `node render.js`. To check frames: `node render.js --stills=12,40.5`.
+
+## Style options
+`style-options/` has the same moment (the leap) in four Indian art styles: Madhubani, Gond, Warli and Tholu Bommalata shadow puppet. To re-render them: `node styles.js`.
