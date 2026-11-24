@@ -1,0 +1,54 @@
+EDIT PLAN - Skills vs Degree reel (80 sec)
+Video: Drive link https://drive.google.com/file/d/1h0eKZKav9pDmuCVkMZrTIyjQMjlDX8Uj/view
+Style: reference reel - bade bold keywords (shadow, NO outline), #1/#2 chapter cards, pop-up image cards, money rain + cash sound, ek line captions (max 5 shabd)
+
+== B-ROLL ==
+0:00.00-0:02.60  PM Modi NDTV clip (9:16 crop, upar ka watermark kaato), keyword MODI JI
+0:08.70-0:10.90  Video chhote frame mein grey grid bg par, label 'Maano ya na maano'
+0:10.90-0:13.30  Peach full-screen card: '2 TARAH KE LOG' + MONEY RAIN overlay + cash register SFX
+0:13.30-0:15.00  White grid card: #1 + red bar 'AI USERS'
+0:36.90-0:40.40  White grid card: #2 + red bar 'JO AI NAHI KAR SAKTA'
+0:58.90-1:01.50  Video frame mein, label 'Living Example'
+1:04.80-1:07.10  Google search screen recording (#1 proof) + keyword '#1 ON GOOGLE'
+1:07.10-1:10.40  3 reels screenshots (151K, 223K, 3.2M) upar se girte hue + 'MILLIONS VIEWS'
+1:12.60-1:16.40  Video phone mockup ke andar
+
+== POP-UP IMAGE CARDS (grey bg, cards upar se girte hain, har card par pop SFX) ==
+0:49.20-0:52.60  🚪 Door-to-door (red X + stamp SFX) | 💎 Premium sale (green tick + ding)
+0:55.50-0:58.90  🏢 Company ka favourite | 🚀 Apni company
+0:40.50-0:43.00  🤝 Trust | ❤️ Emotion | 🔗 Connection
+1:01.50-1:04.80  🧠 Right skills | 🌐 Website by AI
+0:15.00-0:17.10  🤖 AI tools | ⚡ Smart use
+
+== MONEY MOMENTS (CapCut: 'money rain' overlay + 'cash register' / 'cha ching' SFX) ==
+0:10.90-0:13.30
+0:25.90-0:30.30
+1:10.40-1:12.60
+
+== KEYWORDS (bada font, shadow, center chest; color) ==
+0:00.30-0:02.60  MODI JI  [SAFED]
+0:02.80-0:05.20  VALUE  [SAFED]
+0:05.20-0:06.90  SKILLS  [HARA]
+0:06.90-0:08.70  DEGREE  [LAAL]  (strike-through)
+0:17.10-0:20.00  KAM CREDITS  [SAFED]
+0:18.50-0:20.00  BEST OUTPUT  [HARA]
+0:20.00-0:22.60  GREEN FLAG  [HARA]
+0:22.60-0:25.90  RED FLAG  [LAAL]
+0:25.90-0:30.30  CREDIT LIMIT  [NAARANGI]
+0:27.40-0:30.30  > SALARY  [SAFED]
+0:31.30-0:36.00  PROMPTING  [SAFED]
+0:32.60-0:36.00  + LOOPING  [HARA]
+0:45.40-0:49.20  TRUST  [SAFED]
+0:46.60-0:49.20  EMOTION  [SAFED]
+0:47.80-0:49.20  CONNECTION  [SAFED]
+0:52.60-0:55.50  SAHI SELLING  [SAFED]
+1:04.80-1:07.10  #1 ON GOOGLE  [HARA]
+1:07.10-1:10.40  MILLIONS VIEWS  [HARA]
+1:10.40-1:12.60  BUSINESS x10  [NAARANGI]
+1:16.40-1:20.66  COMMENT  [SAFED]
+1:16.40-1:20.66  'SKILLS'  [NAARANGI]
+
+== SFX ==
+Har keyword: pop | Cards/scene change: whoosh | Galat (X): stamp | Sahi (tick): ding | Paisa: cash register + coins
+
+CAPTIONS: captions.srt import karo (CapCut > Text > Import captions / Auto captions ki jagah).
