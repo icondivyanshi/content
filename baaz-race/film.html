@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="hi"><head><meta charset="utf-8"><title>बाज की race — Gond film</title>
+<style>html,body{margin:0;background:#000}canvas{display:block}</style></head>
+<body><canvas id="cv" width="1080" height="1080"></canvas>
+<script src="gond.js"></script>
+<script>
+// 1:1 Gond-art film for the "बाज की race" story. No text, no border. window.drawFrame(f) at 30 fps.
+const TREES = [makeTree(11, 640), makeTree(23, 560, [C.tea, C.yel, C.grn, C.mag, '#2f8f5b']), makeTree(37, 680, [C.ora, C.grn, C.yel, C.tea]), makeTree(51, 600, [C.mag, C.tea, C.grn, C.yel])];
+const CLOUDS = [makeCloud(3, 320), makeCloud(8, 260), makeCloud(14, 380)];
+const STARS = (() => { const R = rng(77), a = []; for (let i = 0; i < 140; i++) a.push([R() * W, R() * 640, 1 + R() * 2.2, R() * 6]); return a; })();
+const LANE = { ele: [346, 700, 0.62], croc: [346, 790, 0.6], eagle: [390, 880, 0.78], chee: [336, 965, 0.75] };
+const SL = 485;
+const SKYC = '#2b86c5';
+
+function stars(c, t, a = 1) { c.save(); c.globalAlpha = a; c.fillStyle = C.cream; STARS.forEach(([x, y, r, p]) => { c.globalAlpha = a * (0.5 + 0.5 * Math.sin(t * 2 + p)); c.beginPath(); c.arc(x, y, r, 0, 7); c.fill(); }); c.restore(); }
+function backTrees(c, camx, gy = 660, dim = 0) {
+  const xs = [-80, 330, 760, 1190, 1620, 2050, 2480, 2910, 3340];
+  xs.forEach((tx, i) => { const img = TREES[i % TREES.length], x = tx - camx * 0.45; if (x < -img.width || x > W + 40) return; c.drawImage(img, x - img.width / 2 + 200, gy - img.height + 6); });
+  if (dim) { c.fillStyle = `rgba(18,14,11,${dim})`; c.fillRect(0, 0, W, gy + 6); }
+}
+function track(c, x0, x1, scroll = 0) {
+  c.fillStyle = '#2a170c'; c.fillRect(x0, 640, x1 - x0, 900);
+  const TB = [[x0, 655], [x1, 655], [x1, 1010], [x0, 1010]];
+  shape(c, TB, { fill: '#b06a28', lw: 3, sharp: true, jt: 0 });
+  c.save(); c.beginPath(); c.rect(x0, 655, x1 - x0, 355); c.clip(); c.fillStyle = '#7a4218';
+  const R = rng(5); const sx = ((scroll % 24) + 24) % 24;
+  for (let y = 668; y < 1010; y += 16) for (let x = x0 - 24 + ((y / 16) % 2) * 12 - sx; x < x1; x += 24) { c.beginPath(); c.arc(x, y, 2.6, 0, 7); c.fill(); }
+  c.restore();
+  [745, 835, 925].forEach((ly) => { c.save(); c.strokeStyle = C.cream; c.lineWidth = 3; c.setLineDash([22, 16]); c.lineDashOffset = scroll; c.beginPath(); c.moveTo(x0, ly); c.lineTo(x1, ly); c.stroke(); c.restore(); });
+  grassStrip(c, x0, x1, 660, 9);
+}
+function startLine(c, x) { const p = []; for (let y = 655, k = 0; y <= 1010; y += 14, k++) p.push([x + (k % 2 ? 7 : -7), y]); shape(c, p, { close: false, stroke: C.cream, lw: 4, sharp: true, jt: 0 }); }
+function flag(c, x, y, t, col) {
+  limb(c, [[x, y], [x, y - 170]], 8, C.brn); const w = Math.sin(t * 9) * 8;
+  const F = [[x, y - 170], [x + 70, y - 150 + w], [x, y - 120]]; shape(c, F, { fill: col, lw: 3, sharp: true }); dotFill(c, F, { col: C.cream, gap: 9, r: 2.2, sharp: true });
+}
+function owlBranch(c, t, blow = 0, point = 0, dx = 0, dy = 0) {
+  c.save(); c.translate(dx, dy);
+  limb(c, [[1200, 330], [1020, 352], [850, 382]], 22, C.brn, { seed: 900 });
+  [[880, 360, -2.2], [960, 340, -1.4], [1040, 330, -0.9], [870, 395, 2.4], [1000, 370, 1.8]].forEach(([x, y, a], i) => leaf(c, x, y, a, 46, [C.grn, C.tea, C.yel, C.mag, C.grn][i], 910 + i));
+  owl(c, { x: 920, y: 362, s: 0.95, blow, point, t });
+  c.restore();
+}
+function lineup(c, t, o = {}) {
+  const { eagleLook = [0.4, 0], eagleOpen = 0, eagleFlap = 0, eagleHead = 0 } = o;
+  elephant(c, { x: LANE.ele[0], y: LANE.ele[1], s: LANE.ele[2], t, earFlap: 0.4 });
+  croc(c, { x: LANE.croc[0], y: LANE.croc[1], s: LANE.croc[2], ph: t });
+  eagle(c, { x: LANE.eagle[0], y: LANE.eagle[1], s: LANE.eagle[2], look: eagleLook, open: eagleOpen, flap: eagleFlap, headDown: eagleHead });
+  cheetah(c, { x: LANE.chee[0], y: LANE.chee[1], s: LANE.chee[2], ph: t * 2, look: [0.6, 0] });
+}
+function fireflies(c, t, n = 26) { const R = rng(44); c.save(); for (let i = 0; i < n; i++) { const x = (R() * W + Math.sin(t * 0.7 + i) * 40), y = 120 + R() * 520 + Math.cos(t * 0.9 + i * 2) * 30; c.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(t * 2 + i)); c.fillStyle = C.yel; c.beginPath(); c.arc(x, y, 3, 0, 7); c.fill(); } c.restore(); }
+function medallion(c, x, y, r, kind, pop, slash) {
+  if (pop <= 0) return; c.save(); c.translate(x, y);
+  const k = clamp(pop), sc = k < 0.7 ? ease(k / 0.7) * 1.12 : lerp(1.12, 1, ease((k - 0.7) / 0.3)); c.scale(sc, sc);
+  shape(c, ell(0, 0, r * 1.14, r * 1.14, 30), { fill: C.yel, lw: 3 });
+  shape(c, ell(0, 0, r, r, 30), { fill: kind === 'wing' ? C.pur : kind === 'wave' ? C.blu : C.dgrn, lw: 3 });
+  beads(c, ell(0, 0, r, r, 40), { inset: 1.07, col: C.red, gap: 12, r: 3 });
+  if (kind === 'wing') for (let i = 0; i < 5; i++) feather(c, -26, 34, -1.95 + i * 0.32, 1.05, [C.cream, C.yel, C.ora, C.cream, C.yel][i]);
+  if (kind === 'wave') for (let i = -1; i <= 1; i++) { const p = []; for (let xx = -52; xx <= 52; xx += 8) p.push([xx, i * 26 + Math.sin(xx / 9) * 7]); limb(c, p, 7, C.cream, { ow: 2 }); }
+  if (kind === 'tree') { limb(c, [[0, 52], [2, 0]], 14, C.brn); [[-1.6, C.grn], [-2.4, C.yel], [-0.8, C.tea], [-3.1, C.mag], [-0.1, C.ora]].forEach(([a, col], i) => leaf(c, 2, -2, a, 40, col, 30 + i)); }
+  if (slash > 0) { const a = [-r * 0.85, -r * 0.85], b = [r * 0.85, r * 0.85]; limb(c, [a, [lerp(a[0], b[0], clamp(slash)), lerp(a[1], b[1], clamp(slash))]], 18, C.red, { ow: 4 }); }
+  c.restore();
+}
+function stampTool(c, x, yb) {
+  c.save(); c.translate(x, yb);
+  shape(c, [[-12, -34], [-9, -100], [9, -100], [12, -34]], { fill: C.brn, lw: 3, sharp: true });
+  shape(c, ell(0, -110, 26, 18, 16), { fill: C.brn, lw: 3 }); dotFill(c, ell(0, -110, 26, 18, 16), { col: C.ochre, gap: 8, r: 2 });
+  shape(c, [[-56, -46], [56, -46], [56, -32], [-56, -32]], { fill: C.ochre, lw: 3, sharp: true });
+  const B = [[-50, -32], [50, -32], [50, 0], [-50, 0]]; shape(c, B, { fill: C.red, lw: 3, sharp: true }); dotFill(c, B, { col: C.yel, gap: 10, r: 2.4, sharp: true });
+  c.restore();
+}
+function sparkles(c, x, y, t, n = 8, R0 = 60) { for (let i = 0; i < n; i++) { const a = i / n * 6.283 + t, r = R0 + Math.sin(t * 4 + i) * 14; c.save(); c.translate(x + Math.cos(a) * r, y + Math.sin(a) * r * 0.7); c.rotate(t * 3 + i); shape(c, [[0, -12], [3, -3], [12, 0], [3, 3], [0, 12], [-3, 3], [-12, 0], [-3, -3]], { fill: C.gold, lw: 1.8, sharp: true }); c.restore(); } }
+function water(c, y0, t, col = '#13579b') {
+  c.fillStyle = col; c.fillRect(0, y0, W, H - y0);
+  for (let k = 0; k < 30; k++) { const y = y0 + 30 + k * 34; if (y > H) break; c.save(); c.strokeStyle = k % 3 ? '#3f8fd6' : '#8ecdf2'; c.lineWidth = 3; c.setLineDash([16, 12]); c.lineDashOffset = -t * 40 * (k % 2 ? 1 : -1); c.beginPath(); for (let x = -10; x <= W + 10; x += 12) { const yy = y + Math.sin(x / 40 + k + t) * 6; x === -10 ? c.moveTo(x, yy) : c.lineTo(x, yy); } c.stroke(); c.restore(); }
+}
+function reeds(c, y, t, seed) { const R = rng(seed); for (let i = 0; i < 9; i++) { const x = 40 + i * 125 + R() * 40, h = 120 + R() * 160, sw = Math.sin(t * 1.2 + i) * 12; limb(c, [[x, y], [x + sw * 0.5, y - h * 0.5], [x + sw, y - h]], 10, C.dgrn, { seed: seed + i }); for (let k = 0; k < 3; k++) leaf(c, x + sw * (k + 1) / 3.5, y - h * (k + 1) / 3.5, (k % 2 ? -0.6 : -2.5) + sw * 0.01, 50, [C.grn, C.tea, C.yel][(i + k) % 3], seed + i * 7 + k); } }
+function bubbles(c, t, x, y, n, seed, spread = 60) { const R = rng(seed); for (let i = 0; i < n; i++) { const u = ((t * (0.5 + R() * 0.6) + R()) % 1); c.save(); c.globalAlpha = 1 - u; shape(c, ell(x + (R() - 0.5) * spread + Math.sin(u * 8 + i) * 8, y - u * 260, 5 + R() * 8, 5 + R() * 8, 10), { fill: 'rgba(200,235,255,.2)', stroke: C.cream, lw: 2 }); c.restore(); } }
+function cloudsAt(c, t, vy = 0, a = 1, seedOff = 0) { const pos = [[120, 160], [700, 90], [420, 420], [900, 560], [80, 760], [620, 900], [300, 1180]]; c.save(); c.globalAlpha = a; pos.forEach(([x, y], i) => { const img = CLOUDS[(i + seedOff) % 3]; let yy = ((y - t * vy) % 1400 + 1400) % 1400 - 200; c.drawImage(img, x - img.width / 2, yy); }); c.restore(); }
+function fields(c, y0, s) { const cols = [C.dgrn, C.ochre, C.grn, '#8a5a24', C.tea, C.yel]; let k = 0; for (let x = -40; x < W + 40; x += 90 * s) for (let y = y0; y < H + 40; y += 60 * s, k++) { const P = [[x, y], [x + 90 * s, y], [x + 90 * s, y + 60 * s], [x, y + 60 * s]]; shape(c, P, { fill: cols[k % 6], lw: 1.6, sharp: true, jt: 0 }); } }
+function flyEagle(c, x, y, s, dir, o) { c.save(); c.translate(x, y); c.scale(dir, 1); eagle(c, { x: 0, y: 0, s, tuck: 1, ...o }); c.restore(); }
+
+// ================== SCENES ==================
+const SC = []; const scene = (d, fn, cues = []) => SC.push({ d, fn, cues });
+
+// 1 — the jungle and the race; close on the eagle, pull back to the lineup
+scene(7, (c, t) => {
+  c.fillStyle = C.bg; c.fillRect(0, 0, W, H); stars(c, t);
+  const z = lerp(3.4, 1.5, E(t, 0.5, 5.2)), u = E(t, 0.5, 5.2);
+  c.save(); cam(c, lerp(440, 440, u), lerp(770, 720, u), z);
+  backTrees(c, 0); track(c, -300, 1600); startLine(c, SL); fireflies(c, t);
+  lineup(c, t, { eagleLook: t < 3.6 ? [0.2, -1] : [0.5, 0] });
+  c.restore();
+  c.save(); c.globalAlpha = E(t, 3.5, 5); owlBranch(c, t, 0, 0, 0, 60); c.restore();
+}, [[0.3, 'flute']]);
+
+// 2 — the rules: no flying, no swimming, no climbing
+scene(8, (c, t) => {
+  c.fillStyle = C.bg; c.fillRect(0, 0, W, H); stars(c, t);
+  const pt = (a) => Math.sin(Math.PI * clamp((t - a) / 1.3));
+  const fold = E(t, 1.4, 1.9);
+  c.save(); cam(c, 440, 720, 1.5);
+  backTrees(c, 0, 660, 0.35); track(c, -300, 1600); startLine(c, SL);
+  lineup(c, t, { eagleOpen: 0.28 * (1 - fold) + 0.04 * Math.sin(t * 6) * (1 - fold), eagleFlap: Math.sin(t * 6) * 0.2 * (1 - fold), eagleHead: 0.25 * fold, eagleLook: [0.2, -0.6] });
+  c.restore();
+  owlBranch(c, t, 0, Math.max(pt(0.5), pt(2.7), pt(4.9)), 0, 60);
+  const items = [[250, 175, 'wing', 0.4], [520, 150, 'wave', 2.6], [790, 175, 'tree', 4.8]];
+  items.forEach(([x, y, k, a]) => medallion(c, x, y, 95, k, (t - a) / 0.6, (t - a - 1.0) / 0.35));
+}, [[1.4, 'swish'], [3.6, 'swish'], [5.8, 'swish']]);
+
+// 3 — whistle; the cheetah takes three seconds
+const cheeX = (t) => { if (t < 1.3) return 336; if (t < 4.3) { const u = (t - 1.3) / 3; return 336 + 2124 * (u < 0.12 ? Math.pow(u / 0.12, 2) * 0.06 : 0.06 + (u - 0.12) / 0.88 * 0.94); } return 2460 + 110 * E(t, 4.3, 5.6); };
+scene(7.5, (c, t) => {
+  c.fillStyle = C.bg; c.fillRect(0, 0, W, H); stars(c, t);
+  const cx = cheeX(t), camx = clamp(cx + 140, 470, 2400);
+  c.save(); cam(c, camx, 790, 1.45);
+  backTrees(c, camx - 470);
+  track(c, -300, 3000); startLine(c, SL);
+  flag(c, 2420, 660, t, C.red); flag(c, 2420, 1010, t, C.yel); startLine(c, 2420);
+  owlBranch(c, t, t > 0.2 && t < 1.4 ? 1 : 0, 0, -150, 200);
+  elephant(c, { x: LANE.ele[0], y: LANE.ele[1], s: LANE.ele[2], t });
+  croc(c, { x: LANE.croc[0], y: LANE.croc[1], s: LANE.croc[2], ph: t });
+  eagle(c, { x: LANE.eagle[0], y: LANE.eagle[1], s: LANE.eagle[2], look: [0.6, 0] });
+  const running = t > 1.3 && t < 5.6;
+  for (let k = 0; k < 30; k++) { const tk = 1.3 + k * 0.1; if (tk > t || tk > 4.4) break; dust(c, cheeX(tk) - 40, 960, (t - tk) / 0.9, 1.2); }
+  if (running && t < 4.4) for (let k = 0; k < 6; k++) { c.save(); c.strokeStyle = C.cream; c.globalAlpha = 0.7; c.lineWidth = 4; c.setLineDash([30, 18]); c.beginPath(); const yy = 830 + k * 22; c.moveTo(cx - 160 - k * 30, yy); c.lineTo(cx - 520 - k * 40, yy); c.stroke(); c.restore(); }
+  cheetah(c, { x: cx, y: 965, s: 0.75, ph: t * 22, run: running ? (t < 4.3 ? 1 : 1 - E(t, 4.3, 5.6)) : 0, look: [0.8, 0] });
+  if (t > 4.2) sparkles(c, 2440, 800, t * 2, 10, 90 * E(t, 4.2, 4.8));
+  c.restore();
+}, [[0.3, 'whistle'], [1.3, 'whoosh'], [1.3, 'drumroll'], [4.25, 'finish']]);
+
+// 4 — left behind: the eagle stumbles, the crocodile stops, the elephant pants
+scene(7, (c, t) => {
+  c.fillStyle = C.bg; c.fillRect(0, 0, W, H); stars(c, t);
+  c.save(); cam(c, 500, 800, 1.75); backTrees(c, 0); track(c, -300, 1600); startLine(c, SL);
+  const ew = t < 2.4; elephant(c, { x: 346 + 70 * E(t, 0.3, 2.4), y: 700, s: 0.62, ph: t * 4, walk: ew ? 1 : 0, pant: E(t, 2.3, 2.9), earFlap: 1, t });
+  croc(c, { x: 346 + 46 * E(t, 0.4, 1.8), y: 790, s: 0.6, ph: t * 7, walk: t < 1.8 ? 1 : 0, flat: E(t, 2.2, 3), jaw: 0.4 * Math.sin(Math.PI * L01(t, 3.6, 4.8)) });
+  const fall = E(t, 2.8, 3.2) * (1 - E(t, 3.5, 4.2));
+  eagle(c, { x: 390 + 230 * E(t, 0.2, 6.6), y: 880, s: 0.78, ph: t * 15, walk: 1, tilt: 0.16 * Math.sin(t * 7.5) + 0.42 * fall, open: 0.16 + 0.08 * Math.sin(t * 15), flap: Math.sin(t * 15) * 0.4, look: [0.7, 0.3] });
+  for (let k = 0; k < 14; k++) { const tk = 0.3 + k * 0.45; if (tk > t) break; dust(c, 390 + 230 * E(tk, 0.2, 6.6) - 10, 880, (t - tk) / 0.9, 0.6); }
+  c.restore();
+}, [[0.2, 'stumble']]);
+
+// 5 — a crown for the cheetah, a stamp on the eagle
+scene(8, (c, t) => {
+  c.fillStyle = C.bg; c.fillRect(0, 0, W, H); stars(c, t);
+  const pan = E(t, 3, 4.1); let sx = 0, sy = 0; if (t > 5 && t < 5.35) { sx = Math.sin(t * 90) * 10; sy = Math.cos(t * 70) * 8; }
+  c.save(); c.translate(sx, sy); cam(c, lerp(430, 1290, pan), lerp(660, 750, pan), lerp(1.45, 1.75, pan));
+  backTrees(c, 0); c.fillStyle = '#2a170c'; c.fillRect(-300, 660, 2200, 800); grassStrip(c, -300, 1900, 664, 21);
+  const POD = [[270, 1000], [270, 830], [305, 830], [305, 726], [585, 726], [585, 830], [620, 830], [620, 1000]];
+  shape(c, POD, { fill: C.ochre, lw: 3, sharp: true }); dashRows(c, POD, { col: C.brn, gap: 10, dash: [18, 8], lw: 3, sharp: true }); shape(c, [[305, 742], [585, 742]], { close: false, stroke: C.red, lw: 6, sharp: true });
+  shape(c, ell(445, 880, 44, 44, 20), { fill: C.gold, lw: 3 }); dotFill(c, ell(445, 880, 44, 44, 20), { col: C.red, gap: 9, r: 2.6 });
+  cheetah(c, { x: 440, y: 728, s: 0.95, ph: t * 2, crown: E(t, 0.6, 2.2), proud: E(t, 2, 2.6), look: [0.6, -0.3] });
+  if (t > 2.2) sparkles(c, 555, 530, t, 9, 70);
+  const slam = t > 5.02, lift = E(t, 5.6, 6.6);
+  eagle(c, { x: 1260, y: 900, s: 1.08, sad: 1, headDown: lerp(0.1, 0.35, E(t, 5, 5.3)), tilt: slam ? 0.08 * (1 - E(t, 5.3, 6)) : 0, mark: slam ? 1 : 0, look: [0.3, -0.5 + E(t, 5, 5.2)] });
+  const hx = 1260 + 52 * 1.08, hy = 900 - 148 * 1.08 + 8;
+  const sy2 = t < 4.3 ? -400 : t < 5.02 ? lerp(-200, hy, Math.pow(L01(t, 4.3, 5.02), 2.2)) : lerp(hy, -300, lift);
+  stampTool(c, hx, sy2);
+  if (t > 5.02 && t < 5.7) for (let k = 0; k < 8; k++) { const a = k / 8 * 6.283, u = L01(t, 5.02, 5.7); limb(c, [[hx + Math.cos(a) * (60 + u * 50), hy + Math.sin(a) * (40 + u * 40)], [hx + Math.cos(a) * (80 + u * 60), hy + Math.sin(a) * (54 + u * 50)]], 5, C.cream, { ow: 0, alpha: 1 - u }); }
+  c.restore();
+}, [[0.6, 'chime'], [5.02, 'stamp']]);
+
+// 6 — the eagle believed them: stops looking at the sky, practises running
+scene(9.5, (c, t) => {
+  const dim = E(t, 2.2, 3.4);
+  c.fillStyle = mix(SKYC, '#3a3a44', dim * 0.75); c.fillRect(0, 0, W, 460);
+  const cyc = (t - 3.4) / 2, mont = t > 3.4;
+  if (!mont) { gsun(c, 840, 170, 70, t); c.save(); c.beginPath(); c.rect(0, 0, W, 460); c.clip(); cloudsAt(c, t, 0, 0.9); c.restore();
+    for (let k = 0; k < 3; k++) flyEagle(c, 150 + k * 260 + t * 30, 190 + k * 50 + Math.sin(t + k) * 20, 0.34, 1, { open: 1, flap: Math.sin(t * 3 + k) * 0.35, alpha: 1 - dim });
+  } else { const ph = cyc % 1, day = ph < 0.6, u = day ? ph / 0.6 : (ph - 0.6) / 0.4; c.fillStyle = day ? mix(SKYC, '#3a3a44', 0.7) : '#141a33'; c.fillRect(0, 0, W, 460); const bx = lerp(80, 1000, u), by = 330 - Math.sin(u * Math.PI) * 220; if (day) gsun(c, bx, by, 55, t, mix(C.yel, '#b9b29a', 0.5)); else gmoon(c, bx, by, 50); }
+  if (dim > 0) { c.fillStyle = `rgba(18,14,11,${0.35 * dim})`; c.fillRect(0, 0, W, 460); }
+  c.save(); cam(c, 540, 730, 1.45);
+  track(c, -200, 1300, mont ? t * 260 : 0);
+  const run = mont ? 1 : 0;
+  eagle(c, { x: 540, y: 880, s: 1.15, ph: t * 13, walk: run, tilt: run * (0.12 + 0.05 * Math.sin(t * 13)), headDown: lerp(-0.5, 0.55, dim), look: dim < 0.5 ? [0.2, -1] : [0.5, 0.6], open: run * 0.1, flap: run * Math.sin(t * 13) * 0.2, sad: dim > 0.5 ? 1 : 0, mark: 1 });
+  if (mont) for (let k = 0; k < 3; k++) { const u = ((t * 1.3 + k / 3) % 1); c.save(); c.globalAlpha = 1 - u; shape(c, [[600 - u * 30, 720 + u * 60], [606 - u * 30, 708 + u * 60], [612 - u * 30, 720 + u * 60], [606 - u * 30, 728 + u * 60]], { fill: '#8ecdf2', lw: 1.6 }); c.restore(); }
+  c.restore();
+}, [[2.4, 'sigh'], [3.4, 'drumloop']]);
+
+// 7 — change the field: the champion at five thousand feet
+scene(7, (c, t) => {
+  c.fillStyle = SKYC; c.fillRect(0, 0, W, H);
+  fields(c, lerp(980, 900, t / 7), lerp(0.45, 0.6, t / 7));
+  cloudsAt(c, t, 520, 1);
+  for (let k = 0; k < 14; k++) { const x = (k * 83) % W, y = ((k * 157 - t * 900) % 1300 + 1300) % 1300 - 100; limb(c, [[x, y], [x, y + 90]], 3, C.cream, { ow: 0, alpha: 0.6 }); }
+  cheetah(c, { x: 540, y: 640, s: 1.3, tumble: t * 2.4, flail: 1, ph: t * 9, look: [0, -1] });
+  const a = t * 0.95 - 1, px = 540 + Math.cos(a) * 360, py = 520 + Math.sin(a) * 260, dir = -Math.sin(a) >= 0 ? 1 : -1;
+  flyEagle(c, px, py, 1.1, dir, { open: 1, flap: Math.sin(t * 3.4) * 0.35, look: [0.5, 0.3] });
+}, [[0, 'wind']]);
+
+// 8 — or into deep water, where the slow crocodile is king
+scene(7, (c, t) => {
+  c.fillStyle = SKYC; c.fillRect(0, 0, W, 220); cloudsAt(c, 0, 0, 0.8, 1);
+  water(c, 215, t, '#0f4f8f');
+  const cx = 540 + Math.sin(t * 2.2) * 26;
+  bubbles(c, t, cx, 340, 10, 3, 120);
+  cheetah(c, { x: cx, y: 340, s: 1.1, tumble: Math.sin(t * 3) * 0.18, flail: 0.8, ph: t * 7, look: [-0.3, -0.8] });
+  c.save(); c.globalAlpha = 0.55; c.fillStyle = '#0f4f8f'; c.fillRect(0, 262, W, H); c.restore();
+  const p = []; for (let x = -10; x <= W + 10; x += 12) p.push([x, 262 + Math.sin(x / 30 + t * 4) * 7]); shape(c, p, { close: false, stroke: C.cream, lw: 4 });
+  reeds(c, 1090, t, 70);
+  croc(c, { x: -380 + t * 240, y: 760, s: 1.3, ph: t * 4, swim: 1, look: [0.3, -1] });
+  bubbles(c, t, -380 + t * 240 + 240, 700, 6, 9, 40);
+}, [[0, 'underwater']]);
+
+// 9 — everyone has an unfair advantage
+function panel(c, i, t) {
+  if (i === 0) { c.fillStyle = SKYC; c.fillRect(0, 0, W, H); gsun(c, 820, 230, 90, t); cloudsAt(c, t, 40, 1); flyEagle(c, 520, 700, 1.7, 1, { open: 1, flap: Math.sin(t * 3) * 0.35, look: [0.6, 0] }); }
+  if (i === 1) { water(c, 0, t, '#0f4f8f'); reeds(c, 1090, t, 71); croc(c, { x: 560 + Math.sin(t) * 40, y: 640, s: 1.75, ph: t * 4, swim: 1, look: [0.6, 0] }); bubbles(c, t, 900, 600, 6, 5, 80); }
+  if (i === 2) { c.fillStyle = C.bg; c.fillRect(0, 0, W, H); stars(c, t); c.drawImage(TREES[2], 640, 1000 - TREES[2].height); c.fillStyle = '#2a170c'; c.fillRect(0, 990, W, 100); grassStrip(c, 0, W, 994, 3); elephant(c, { x: 360, y: 1000, s: 1.55, trunkUp: 0.62 + 0.08 * Math.sin(t * 2), log: 1, earFlap: 1, t }); }
+  if (i === 3) { c.fillStyle = '#d99a3a'; c.fillRect(0, 0, W, H); gsun(c, 200, 200, 70, t); c.fillStyle = C.ochre; c.fillRect(0, 880, W, 200); for (let k = 0; k < 18; k++) { const x = ((k * 90 - t * 900) % 1300 + 1300) % 1300 - 100; shape(c, [[x - 6, 900], [x, 860], [x + 6, 900]], { fill: C.dgrn, lw: 2 }); } for (let k = 0; k < 5; k++) limb(c, [[180 - k * 40, 650 + k * 40], [-100, 650 + k * 40]], 5, C.cream, { ow: 0, alpha: 0.7 }); cheetah(c, { x: 560, y: 900, s: 1.55, ph: t * 20, run: 1, look: [0.8, 0] }); }
+}
+scene(8, (c, t) => {
+  c.fillStyle = '#000'; c.fillRect(0, 0, W, H);
+  const P = 533, G = 14;
+  [[0, 0], [P + G, 0], [0, P + G], [P + G, P + G]].forEach(([px, py], i) => {
+    const r = E(t, 0.2 + i * 1.3, 0.9 + i * 1.3) * 400; if (r <= 0) return;
+    c.save(); c.beginPath(); c.arc(px + P / 2, py + P / 2, r, 0, 7); c.rect(px, py, P, P); c.clip('evenodd'); c.restore();
+    c.save(); c.beginPath(); c.rect(px, py, P, P); c.clip(); c.beginPath(); c.arc(px + P / 2, py + P / 2, r, 0, 7); c.clip();
+    c.translate(px, py); c.scale(P / W, P / H); panel(c, i, t); c.restore();
+  });
+}, [[0.2, 'pop'], [1.5, 'pop'], [2.8, 'pop'], [4.1, 'pop']]);
+
+// 10 — same track for everyone; your shadow says you were born to fly
+scene(8, (c, t) => {
+  c.fillStyle = C.bg; c.fillRect(0, 0, W, H); stars(c, t, 0.6);
+  gsun(c, 150, 170, 70, t, mix(C.yel, C.ora, 0.4));
+  c.save(); cam(c, 560, 760, 1.35);
+  c.fillStyle = '#2a170c'; c.fillRect(-200, 520, 1500, 900);
+  for (let k = 0; k < 11; k++) { const y = 540 + k * 62; c.fillStyle = k % 2 ? '#b06a28' : '#a36024'; c.fillRect(-200, y, 1500, 58); c.save(); c.strokeStyle = C.cream; c.globalAlpha = 0.6; c.lineWidth = 3; c.setLineDash([22, 16]); c.beginPath(); c.moveTo(-200, y); c.lineTo(1300, y); c.stroke(); c.restore(); }
+  const ex = 330 + t * 18, ey = 850;
+  cheetah(c, { x: 700 + t * 35, y: ey, s: 0.85, ph: t * 14, run: 1, ghost: 1 });
+  const so = E(t, 2.6, 5.4);
+  c.save(); c.translate(ex, ey); c.transform(1, 0, -1.1, -0.34, 0, 0); c.globalAlpha = 0.6;
+  eagle(c, { x: 0, y: 0, s: 1.1, sil: '#07040a', open: so, flap: so * Math.sin(t * 2.5) * 0.3, tuck: so });
+  c.restore();
+  eagle(c, { x: ex, y: ey, s: 1.1, ph: t * 6, walk: t < 4.6 ? 0.8 : 0, headDown: E(t, 4.6, 5.4) * 0.55, look: t < 4.6 ? [0.8, 0] : [0.2, 0.9], mark: 1, sad: 1 });
+  c.restore();
+}, [[2.6, 'shimmer']]);
+
+// 11 — the tragedy: cutting its own wings to win their race
+const SNIPS = [1.6, 3.6, 5.6];
+const FEATH = SNIPS.flatMap((st, si) => [0, 1, 2].map((k) => ({ st: st + 0.05 + k * 0.08, dx: (k - 1) * 30 + si * 18, rot: k * 1.3 + si, seed: si * 3 + k })));
+const TIP = [292, 640];
+scene(9, (c, t) => {
+  c.fillStyle = '#0b0a14'; c.fillRect(0, 0, W, H); stars(c, t); gmoon(c, 900, 150, 70);
+  c.save(); cam(c, 420, 760, 1.55);
+  c.fillStyle = '#1e120a'; c.fillRect(-200, 900, 1500, 400); c.fillStyle = '#5a3416'; c.fillRect(-200, 905, 1500, 400);
+  let cut = 0; SNIPS.forEach((s) => { cut += E(t, s, s + 0.15) / 3; });
+  FEATH.forEach((f) => { if (t < f.st) return; const u = clamp((t - f.st) / 2.2); const x = TIP[0] + f.dx + Math.sin(u * 9 + f.seed) * 26 * (1 - u), y = lerp(TIP[1], 935 + f.seed % 3 * 6, ease(u)); feather(c, x, y, f.rot + u * 2 * (1 - u) + (u >= 1 ? 0 : Math.sin(u * 10) * 0.5) * (1 - u) + (u >= 1 ? -f.rot + 0.1 * f.seed : 0), 0.9); });
+  eagle(c, { x: 460, y: 905, s: 1.35, open: 0.38, cut, sad: 1, headDown: 0.3, look: [-0.6, 0.6], mark: 1 });
+  const nextSnip = SNIPS.find((s) => t < s + 0.4);
+  if (nextSnip !== undefined && t > 0.9) {
+    const a = E(t, 0.9, 1.4), open = nextSnip - t > 0.15 ? 1 : clamp((nextSnip - t) / 0.15);
+    scissors(c, lerp(-120, TIP[0] + 20, a), lerp(300, TIP[1] - 10, a), 0.6, 0.75, open);
+  } else if (t > 6) scissors(c, TIP[0] + 20 + (t - 6) * 200, TIP[1] - 10 - (t - 6) * 120, 0.6 + (t - 6), 0.75, 0.3);
+  if (t > 6.8) { const u = clamp((t - 6.8) / 1.6); c.save(); c.globalAlpha = 1 - u * 0.5; const tx = 460 + 67 * 1.35, ty = 905 - 128 * 1.35 + u * 120; shape(c, [[tx, ty - 8], [tx + 6, ty + 4], [tx, ty + 10], [tx - 6, ty + 4]], { fill: '#8ecdf2', lw: 1.6 }); c.restore(); }
+  c.restore();
+}, [[1.6, 'snip'], [3.6, 'snip'], [5.6, 'snip'], [0, 'night']]);
+
+// 12 — it looks up again: feathers return, wings open, it flies
+scene(10, (c, t) => {
+  const dawn = E(t, 0.3, 3.5);
+  c.fillStyle = mix('#0b0a14', SKYC, dawn); c.fillRect(0, 0, W, H); stars(c, t, 1 - dawn);
+  const lift = E(t, 4.2, 9.5);
+  gsun(c, 700, lerp(1150, 300, E(t, 0.5, 5)), 120, t, C.yel);
+  const zz = lerp(1.5, 1.15, E(t, 3.5, 6));
+  c.save(); cam(c, lerp(420, 520, E(t, 3.5, 6)), 760, zz); c.translate(0, lift * 1300);
+  cloudsAt(c, 0, 0, dawn, 2); c.save(); c.translate(0, -1300); cloudsAt(c, 0, 0, dawn, 1); c.restore();
+  c.fillStyle = '#1e120a'; c.fillRect(0, 900, W, 400); c.fillStyle = mix('#5a3416', '#b06a28', dawn); c.fillRect(0, 905, W, 400); grassStrip(c, 0, W, 908, 12);
+  const back = E(t, 1.6, 3.2);
+  FEATH.forEach((f, i) => { const gx = TIP[0] + f.dx + 0, gy = 935 + f.seed % 3 * 6; const x = lerp(gx, TIP[0], back), y = lerp(gy, TIP[1], back); if (back < 1) feather(c, x, y, lerp(0.1 * f.seed, 0, back), 0.9 * (1 - back * 0.6)); });
+  if (t < 2.4) scissors(c, 160 - t * 40, 300 + t * t * 260, -0.5 - t, 0.75, 0.2);
+  const open = lerp(0.38, 1, E(t, 3.1, 4.1)), flapA = t > 3.8 ? Math.sin((t - 3.8) * 5.5) * 0.45 : 0;
+  const ey = 905 - lift * 1500, ex = 460 + lift * 120;
+  eagle(c, { x: ex, y: ey, s: 1.35, open, flap: flapA, cut: 1 - back, headDown: lerp(0.3, -0.5, E(t, 0, 1.4)) * (1 - E(t, 4, 5)), look: t < 4 ? [0.2, -1] : [0.7, -0.2], tuck: E(t, 4.4, 5), mark: 1 - E(t, 2, 3.5) });
+  c.restore();
+  if (t > 6) for (let k = 0; k < 10; k++) { const x = (k * 113) % W, y = ((k * 211 + t * 700) % 1300) - 100; limb(c, [[x, y], [x, y + 70]], 3, C.cream, { ow: 0, alpha: 0.45 }); }
+}, [[0.3, 'dawn'], [1.6, 'rise'], [3.8, 'flap'], [4.3, 'flute2']]);
+
+// ================== driver ==================
+const STARTS = []; { let a = 0; SC.forEach((s) => { STARTS.push(a); a += s.d; }); }
+const TOTAL = STARTS[STARTS.length - 1] + SC[SC.length - 1].d, XF = 0.5;
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const offA = document.createElement('canvas'), offB = document.createElement('canvas'); offA.width = offB.width = W; offA.height = offB.height = H;
+function renderScene(c, i, t) { c.setTransform(1, 0, 0, 1, 0, 0); c.globalAlpha = 1; c.save(); SC[i].fn(c, Math.max(0, t)); c.restore(); }
+window.drawFrame = (f) => {
+  BOIL = Math.floor(f / 4) % 3;
+  const T = f / FPS; let i = 0; while (i < SC.length - 1 && T >= STARTS[i + 1]) i++;
+  const t = T - STARTS[i], rem = SC[i].d - t;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (i < SC.length - 1 && rem < XF) { renderScene(offA.getContext('2d'), i, t); renderScene(offB.getContext('2d'), i + 1, 0); ctx.drawImage(offA, 0, 0); ctx.globalAlpha = ease(1 - rem / XF); ctx.drawImage(offB, 0, 0); ctx.globalAlpha = 1; }
+  else renderScene(ctx, i, t);
+  if (T < 0.6) { ctx.fillStyle = `rgba(0,0,0,${1 - T / 0.6})`; ctx.fillRect(0, 0, W, H); }
+  if (T > TOTAL - 1) { ctx.fillStyle = `rgba(0,0,0,${clamp(T - (TOTAL - 1))})`; ctx.fillRect(0, 0, W, H); }
+};
+window.FILM = { TOTAL, FPS, CUES: SC.map((s, i) => ({ start: STARTS[i], d: s.d, cues: s.cues })) };
+window.READY = Promise.resolve(true).then(() => { window.drawFrame(0); return true; });
+</script></body></html>
